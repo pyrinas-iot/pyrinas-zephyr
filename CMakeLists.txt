@@ -4,8 +4,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-# Point to NCS root directory.
-# set(NRF_DIR ${CMAKE_CURRENT_LIST_DIR} CACHE PATH "NCS root directory")
+# Point to Pyrinas root directory.
+set(PYRINAS_DIR ${CMAKE_CURRENT_LIST_DIR} CACHE PATH "Pyrinas root directory")
 
+zephyr_include_directories(include)
+
+add_subdirectory(lib)
 add_subdirectory(ext)
-
