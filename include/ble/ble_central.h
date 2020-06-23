@@ -7,18 +7,16 @@
 #ifndef BLE_M_CENTRAL_H
 #define BLE_M_CENTRAL_H
 
-#include <bluetooth/gatt.h>
-#include <bluetooth/uuid.h>
-#include <bluetooth/gatt_dm.h>
-#include <bluetooth/scan.h>
+#include <ble/ble_settings.h>
+#include <ble/ble_handlers.h>
 
-#include "ble_settings.h"
-#include "ble_handlers.h"
+#define BLE_CENTRAL_QUEUE_SIZE 10
+#define BLE_CENTRAL_ADDR_STR_LEN 30
 
 /* Struct for initailizing bluetooth central */
 typedef struct
 {
-    char addr[BLE_SETTINGS_MAX_CONNECTIONS][BT_ADDR_LE_STR_LEN];
+    char addr[BLE_SETTINGS_MAX_CONNECTIONS][BLE_CENTRAL_ADDR_STR_LEN];
     uint8_t device_count;
 } ble_central_init_t;
 

@@ -33,11 +33,6 @@
 #ifndef APP_WEAK_H
 #define APP_WEAK_H
 
-#include <zephyr.h>
-#include <sys/printk.h>
-
-#include <ble/ble_m.h>
-
 void setup(void);
 void loop(void);
 

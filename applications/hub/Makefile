@@ -6,7 +6,7 @@ $(info PROG_SERIAL not set. Using default of $(PROG_SERIAL))
 endif
 
 ifndef PROG_PORT
-PROG_PORT := 19021
+PROG_PORT := 19022
 $(info PROG_PORT not set. Using default of $(PROG_PORT))
 endif
 

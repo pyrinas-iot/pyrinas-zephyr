@@ -1,0 +1,38 @@
+#
+# Copyright (c) 2018 Nordic Semiconductor
+#
+# SPDX-License-Identifier: LicenseRef-BSD-5-Clause-Nordic
+#
+
+menu "Pyrinas Library"
+
+config PYRINAS_ENABLED
+	bool "Enable Pyrinas"
+	help
+		This option enables Pyrinas overall.
+
+if PYRINAS_ENABLED
+
+choice
+	prompt "Bluetooth Mode"
+	default PYRINAS_PERIPH_ENABLED
+	help
+		Select from which Pyrinas mode to use. Central or Peripheral.
+
+config PYRINAS_CENTRAL_ENABLED
+	bool "Use Pyrinas in Central Mode"
+  select BT_GATT_NUS_C
+	help
+		Use Pyrinas in Central Mode.
+
+config PYRINAS_PERIPH_ENABLED
+	bool "Use Pyrinas in Peripheral Mode"
+  select BT_GATT_NUS
+	help
+		Use Pyrinas in as a Peripheral Client
+
+endchoice
+
+endif
+
+endmenu

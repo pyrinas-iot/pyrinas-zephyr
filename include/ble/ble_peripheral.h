@@ -7,6 +7,8 @@
 #ifndef BLE_M_PERIPHERAL_H
 #define BLE_M_PERIPHERAL_H
 
+#if CONFIG_PYRINAS_PERIPH_ENABLED
+
 #include "ble_handlers.h"
 
 //TODO document
@@ -17,5 +19,7 @@ void ble_peripheral_write(const u8_t *data, u16_t size);
 void ble_peripheral_advertising_start(void);
 void ble_peripheral_init(void);
 void ble_peripheral_ready(void);
+
+#endif
 
 #endif

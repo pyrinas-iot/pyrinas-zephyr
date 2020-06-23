@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#if CONFIG_PYRINAS_PERIPH_ENABLED
+
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <string.h>
@@ -61,19 +63,21 @@ void ble_peripheral_advertising_start(void)
 
     LOG_INF("Bluetooth initialized");
 
-    // TODO: Advertising parameters. Most important being `BT_LE_ADV_OPT_CODED` and `BT_LE_ADV_OPT_EXT_ADV`
-    //BT_LE_ADV_OPT_CODED | BT_LE_ADV_OPT_EXT_ADV
-    struct bt_le_adv_param *adv_param =
-        BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
-                        BT_GAP_ADV_SLOW_INT_MIN,
-                        BT_GAP_ADV_SLOW_INT_MAX,
-                        NULL);
-
     int err;
 
     // If NULL set it up!
     if (adv == NULL)
     {
+
+        // TODO: Advertising parameters. Most important being `BT_LE_ADV_OPT_CODED` and `BT_LE_ADV_OPT_EXT_ADV`
+        // BT_LE_ADV_OPT_CODED | BT_LE_ADV_OPT_EXT_ADV
+        struct bt_le_adv_param *adv_param =
+            BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
+                            BT_GAP_ADV_FAST_INT_MIN_2,
+                            BT_GAP_ADV_FAST_INT_MAX_2,
+                            NULL);
+
+        LOG_INF("bt_le_ext_adv_create");
         err = bt_le_ext_adv_create(adv_param, NULL, &adv);
         if (err)
         {
@@ -144,6 +148,13 @@ static void disconnected(struct bt_conn *conn, u8_t reason)
         current_conn = NULL;
     }
 
+    // Remove data from queue
+    k_msgq_purge(&m_peripheral_event_queue);
+
+    // Release semaphore
+    k_sem_give(&nus_write_sem);
+
+    // Set as not ready
     atomic_set(&m_ready, 0);
 
     // Start advertising again
@@ -159,16 +170,15 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 
     if (!err)
     {
-        printk("Security changed: %s level %u\n", addr, level);
+        LOG_INF("Security changed: %s level %u", log_strdup(addr), level);
 
         // Encryption is a go!
         atomic_set(&m_ready, 1);
     }
     else
     {
-        printk("Security failed: %s level %u err %d\n", addr, level,
+        printk("Security failed: %s level %u err %d", log_strdup(addr), level,
                err);
-
 
         // Disconnect on security failure
         int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -388,3 +398,5 @@ bool ble_peripheral_is_connected(void)
     // Check if set up and not disconnected
     return (atomic_get(&m_ready) == 1);
 }
+
+#endif

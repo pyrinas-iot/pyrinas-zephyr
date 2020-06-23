@@ -14,14 +14,11 @@
 #ifndef BLE_M_H__
 #define BLE_M_H__
 
-#include <stdbool.h>
-#include <stdint.h>
 #include <proto/command.pb.h>
 
-#include "ble_peripheral.h"
-#include "ble_central.h"
-#include "ble_handlers.h"
-#include "ble_settings.h"
+#include <ble/ble_central.h>
+#include <ble/ble_settings.h>
+#include <ble/ble_handlers.h>
 
 /**@brief Struct for tracking callbacks
  */

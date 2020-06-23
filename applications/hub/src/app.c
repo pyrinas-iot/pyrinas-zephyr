@@ -1,4 +1,4 @@
-#include <app/app.h>
+#include <app/app_includes.h>
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(app);

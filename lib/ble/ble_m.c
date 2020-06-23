@@ -7,19 +7,44 @@
 #include <device.h>
 #include <devicetree.h>
 #include <drivers/gpio.h>
-#include <proto/command.pb.h>
 #include <settings/settings.h>
 
-#include <ble/ble_central.h>
+#include <bluetooth/bluetooth.h>
+
 #include <ble/ble_m.h>
+#include <ble/ble_central.h>
 #include <ble/ble_peripheral.h>
 #include <ble/ble_settings.h>
 
+#include <proto/command.pb.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(ble_m);
+
+/*
+ * Devicetree helper macro which gets the 'flags' cell from a 'gpios'
+ * property, or returns 0 if the property has no 'flags' cell.
+ */
+
+#define FLAGS_OR_ZERO(node)                          \
+    COND_CODE_1(DT_PHA_HAS_CELL(node, gpios, flags), \
+                (DT_GPIO_FLAGS(node, gpios)),        \
+                (0))
+
+/*
+ * The led0 devicetree alias is optional. If present, we'll use it
+ * to turn on the LED whenever the button is pressed.
+ */
+
+#define LED2_NODE DT_ALIAS(led2)
+
+#if DT_NODE_HAS_STATUS(LED2_NODE, okay) && DT_NODE_HAS_PROP(LED2_NODE, gpios)
+#define LED2_GPIO_LABEL DT_GPIO_LABEL(LED2_NODE, gpios)
+#define LED2_GPIO_PIN DT_GPIO_PIN(LED2_NODE, gpios)
+#define LED2_GPIO_FLAGS (GPIO_OUTPUT | FLAGS_OR_ZERO(LED2_NODE))
+#endif
 
 #define member_size(type, member) sizeof(((type *)0)->member)
 
@@ -39,6 +64,32 @@ static int subscriber_search(protobuf_event_t_name_t *event_name); // Forward de
 
 // Temporary evt
 static protobuf_event_t evt;
+
+/* LED for indicating status */
+struct device *led;
+
+#ifdef LED2_GPIO_LABEL
+/* Timer for flashing LED*/
+static void led_flash_handler(struct k_timer *timer);
+K_TIMER_DEFINE(led_flash_timer, led_flash_handler, NULL);
+
+static void led_flash_handler(struct k_timer *timer)
+{
+
+    if (!ble_is_connected())
+    {
+        // Toggle this guy
+        gpio_pin_toggle(led, LED2_GPIO_PIN);
+        // Restart the timer
+        k_timer_start(&led_flash_timer, K_SECONDS(1), K_NO_WAIT);
+    }
+    else
+    {
+        // Toggle this guy
+        gpio_pin_set(led, LED2_GPIO_PIN, 1);
+    }
+}
+#endif
 
 static void bt_send_work_handler(struct k_work *work)
 {
@@ -74,16 +125,11 @@ bool ble_is_connected(void)
 
     bool is_connected = false;
 
-    switch (m_config.mode)
-    {
-    case ble_mode_peripheral:
-        is_connected = ble_peripheral_is_connected();
-        break;
-    case ble_mode_central:
-        is_connected = ble_central_is_connected();
-        break;
-    }
-
+#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    is_connected = ble_peripheral_is_connected();
+#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    is_connected = ble_central_is_connected();
+#endif
     // LOG_INF("%sconnected. %d", is_connected ? "" : "not ", m_config.mode);
 
     return is_connected;
@@ -91,15 +137,11 @@ bool ble_is_connected(void)
 
 void ble_disconnect(void)
 {
-    switch (m_config.mode)
-    {
-    case ble_mode_peripheral:
-        ble_peripheral_disconnect();
-        break;
-    case ble_mode_central:
-        ble_central_disconnect();
-        break;
-    }
+#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    ble_peripheral_disconnect();
+#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    ble_central_disconnect();
+#endif
 }
 
 void ble_publish(char *name, char *data)
@@ -158,15 +200,11 @@ void ble_publish_raw(protobuf_event_t event)
     }
 
     // TODO: send to connected device(s)
-    switch (m_config.mode)
-    {
-    case ble_mode_peripheral:
-        ble_peripheral_write(output, ostream.bytes_written);
-        break;
-    case ble_mode_central:
-        ble_central_write(output, ostream.bytes_written);
-        break;
-    }
+#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    ble_peripheral_write(output, ostream.bytes_written);
+#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    ble_central_write(output, ostream.bytes_written);
+#endif
 }
 
 void ble_subscribe(char *name, susbcribe_handler_t handler)
@@ -214,26 +252,16 @@ void ble_subscribe(char *name, susbcribe_handler_t handler)
 void advertising_start(void)
 {
 
-    if (m_config.mode == ble_mode_peripheral)
-    {
-        ble_peripheral_advertising_start();
-    }
-    else
-    {
-        LOG_WRN("No advertising in central mode.");
-    }
+#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    ble_peripheral_advertising_start();
+#endif
 }
 
 void scan_start(void)
 {
-    if (m_config.mode == ble_mode_central)
-    {
-        ble_central_scan_start();
-    }
-    else
-    {
-        LOG_WRN("No scanning in peripheral mode.");
-    }
+#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    ble_central_scan_start();
+#endif
 }
 
 /**@brief Function for queuing events so they can read in main context.
@@ -309,7 +337,7 @@ static void ble_ready(int err)
         LOG_INF("BLE Stack Ready!");
     }
 
-    // Enable settings..
+    // Load settings..
     if (IS_ENABLED(CONFIG_SETTINGS))
     {
         // Get the settings..
@@ -325,19 +353,45 @@ static void ble_ready(int err)
     m_init_complete = true;
 
     // Call the ready functions for peripheral and central
-    if (m_config.mode == ble_mode_central)
-    {
-        ble_central_ready();
-    }
-    else if (m_config.mode == ble_mode_peripheral)
-    {
-        ble_peripheral_ready();
-    }
-    else
-    {
-        LOG_WRN("BLE mode not set!");
-    }
+#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    ble_central_ready();
+#elif defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    ble_peripheral_ready();
+#endif
 }
+
+#ifdef LED2_GPIO_LABEL
+static struct device *initialize_led(void)
+{
+    struct device *led;
+    int ret;
+
+    led = device_get_binding(LED2_GPIO_LABEL);
+    if (led == NULL)
+    {
+        printk("Didn't find LED device %s\n", LED2_GPIO_LABEL);
+        return NULL;
+    }
+
+    ret = gpio_pin_configure(led, LED2_GPIO_PIN, LED2_GPIO_FLAGS);
+    if (ret != 0)
+    {
+        printk("Error %d: failed to configure LED device %s pin %d\n",
+               ret, LED2_GPIO_LABEL, LED2_GPIO_PIN);
+        return NULL;
+    }
+
+    printk("Set up LED at %s pin %d\n", LED2_GPIO_LABEL, LED2_GPIO_PIN);
+
+    return led;
+}
+#else
+static struct device *initialize_led(void)
+{
+    LOG_WRN("led2 is not defined.");
+    return NULL;
+}
+#endif
 
 // TODO: transmit power
 void ble_stack_init(ble_stack_init_t *p_init)
@@ -354,6 +408,14 @@ void ble_stack_init(ble_stack_init_t *p_init)
 
     // Copy over configuration
     memcpy(&m_config, p_init, sizeof(m_config));
+
+    // Initialize connection LED
+    led = initialize_led();
+
+#ifdef LED2_GPIO_LABEL
+    // Start message timer
+    k_timer_start(&led_flash_timer, K_SECONDS(1), K_NO_WAIT);
+#endif
 
 // Get the port involved
 #if CONFIG_BOARD_CIRCUITDOJO_FEATHER_NRF9160_NS && defined(CONFIG_HCI_NCP_RST_PORT) && defined(CONFIG_HCI_NCP_RST_PIN)
@@ -378,24 +440,21 @@ void ble_stack_init(ble_stack_init_t *p_init)
     __ASSERT(err == 0, "Error: Unable to configure pin: %d", err);
 #endif
 
-    switch (m_config.mode)
-    {
-    case ble_mode_peripheral:
-        // Attach handler
-        ble_peripheral_attach_handler(ble_evt_handler);
+#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    // Attach handler
+    ble_peripheral_attach_handler(ble_evt_handler);
 
-        // Init peripheral mode
-        ble_peripheral_init();
-        break;
+    // Init peripheral mode
+    ble_peripheral_init();
+#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    // First, attach handler
+    ble_central_attach_handler(ble_evt_handler);
 
-    case ble_mode_central:
-        // First, attach handler
-        ble_central_attach_handler(ble_evt_handler);
-
-        // Initialize
-        ble_central_init(&m_config.central_config);
-        break;
-    }
+    // Initialize
+    ble_central_init(&m_config.central_config);
+#else
+#error CONFIG_PYRINAS_PERIPH_ENABLED or CONFIG_PYRINAS_CENTRAL_ENABLED must be defined.
+#endif
 }
 
 // Passthrough function for subscribing to RAW events

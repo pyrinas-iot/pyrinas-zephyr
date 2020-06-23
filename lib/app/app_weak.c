@@ -30,7 +30,7 @@
  *
  */
 
-#include <app/app.h>
+#include <zephyr.h>
 
 void __weak setup(void)
 {

@@ -1,4 +1,4 @@
-#include <app/app.h>
+#include <app/app_includes.h>
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(app);
@@ -26,7 +26,7 @@ void evt_cb(char *name, char *data)
 void setup(void)
 {
   // Message!
-  LOG_INF("Start of Pyrinas Client example!\n");
+  LOG_INF("Start of Pyrinas Client example!");
 
   // Default config for central mode
   BLE_STACK_PERIPH_DEF(init);
