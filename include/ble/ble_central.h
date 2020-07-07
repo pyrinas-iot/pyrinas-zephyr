@@ -34,5 +34,6 @@ void ble_central_write(const u8_t *data, u16_t size);
 void ble_central_scan_start(void);
 int ble_central_init(ble_central_init_t *init);
 void ble_central_ready(void);
+void ble_central_process(void);
 
 #endif

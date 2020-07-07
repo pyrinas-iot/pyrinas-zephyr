@@ -1,11 +1,12 @@
 #
-# Copyright (c) 2018 Nordic Semiconductor
+# Copyright (c) 2020 Circuit Dojo
 #
-# SPDX-License-Identifier: LicenseRef-BSD-5-Clause-Nordic
+# SPDX-License-Identifier: Apache-2.0
 #
 
 menu "Pyrinas"
 
 rsource "lib/Kconfig"
+rsource "drivers/Kconfig"
 
 endmenu

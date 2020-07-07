@@ -22,6 +22,8 @@
 #include <bluetooth/hci_vs.h>
 #include <bluetooth/services/nus.h>
 
+#include <mgmt/smp_bt.h>
+
 #include <ble/ble_handlers.h>
 #include <ble/ble_settings.h>
 
@@ -77,7 +79,7 @@ void ble_peripheral_advertising_start(void)
                             BT_GAP_ADV_FAST_INT_MAX_2,
                             NULL);
 
-        LOG_INF("bt_le_ext_adv_create");
+        LOG_DBG("bt_le_ext_adv_create");
         err = bt_le_ext_adv_create(adv_param, NULL, &adv);
         if (err)
         {
@@ -177,7 +179,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
     }
     else
     {
-        printk("Security failed: %s level %u err %d", log_strdup(addr), level,
+        LOG_ERR("Security failed: %s level %u err %d", log_strdup(addr), level,
                err);
 
         // Disconnect on security failure
@@ -337,6 +339,9 @@ void ble_peripheral_ready()
     // Register callbacks
     bt_conn_cb_register(&conn_callbacks);
     bt_conn_auth_cb_register(&conn_auth_callbacks);
+
+    /* Initialize the Bluetooth mcumgr transport. */
+    smp_bt_register();
 }
 
 void ble_peripheral_write(const u8_t *data, u16_t len)

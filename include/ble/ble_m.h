@@ -90,6 +90,8 @@ void ble_subscribe_raw(raw_susbcribe_handler_t handler);
 // TODO: document this
 void advertising_start(void);
 
+void ble_erase_bonds(void);
+
 /**@brief Function for checking the connection state.
  *
  * @retval true     If peripheral device is connected.

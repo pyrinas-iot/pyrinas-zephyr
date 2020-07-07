@@ -60,6 +60,19 @@ static K_WORK_DEFINE(bt_send_work, bt_send_work_handler);
 /* Storing static config*/
 static ble_central_init_t m_config;
 
+/* Track scan failure */
+static atomic_t scan_failure;
+
+void ble_central_process(void)
+{
+
+	// if not fully connected && not scanning, scan
+	if (atomic_get(&scan_failure) == 1)
+	{
+		ble_central_scan_start();
+	}
+}
+
 static void bt_send_work_handler(struct k_work *work)
 {
 	int err;
@@ -121,7 +134,13 @@ static void scan_filter_match(struct bt_scan_device_info *device_info,
 															struct bt_scan_filter_match *filter_match,
 															bool connectable)
 {
-	LOG_INF("Found and is %sconnectable", connectable ? "" : "not ");
+
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(device_info->addr, addr, sizeof(addr));
+	LOG_INF("scn match: [addr: %s] [type: %d] [rssi: %d] [c: %d]", log_strdup(addr), device_info->adv_info.adv_type, device_info->adv_info.rssi, connectable);
+
+	// Then connect
 }
 
 static void scan_connecting(struct bt_scan_device_info *device_info,
@@ -140,8 +159,16 @@ static void scan_connecting(struct bt_scan_device_info *device_info,
 	}
 }
 
+static void scan_error(struct bt_scan_device_info *device_info)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(device_info->addr, addr, sizeof(addr));
+	LOG_INF("scn err: [addr: %s] [type: %d] [rssi: %d]", log_strdup(addr), device_info->adv_info.adv_type, device_info->adv_info.rssi);
+}
+
 BT_SCAN_CB_INIT(scan_cb, scan_filter_match, NULL,
-								NULL, scan_connecting);
+								scan_error, scan_connecting);
 
 static void ble_central_scan_init(void)
 {
@@ -159,7 +186,7 @@ static void ble_central_scan_init(void)
 	// !Note: this sets the default connection interval. If it needs
 	// !to be sped up, this is the place
 	struct bt_scan_init_param scan_init = {
-			.connect_if_match = 1,
+			.connect_if_match = true,
 			.scan_param = &scan_param,
 			.conn_param = BT_LE_CONN_PARAM_DEFAULT,
 	};
@@ -403,11 +430,19 @@ static void gatt_discover(struct bt_conn *conn)
 void ble_central_scan_start()
 {
 	int err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
-	if (err)
+	if (err == -EALREADY)
+	{
+		atomic_set(&scan_failure, 0);
+	}
+	else if (err)
 	{
 		LOG_WRN("Scanning failed to start, err %d\n", err);
+		atomic_set(&scan_failure, 1);
 		return;
 	}
+
+	/* Reset this flag */
+	atomic_set(&scan_failure, 0);
 
 	LOG_INF("Scanning...");
 }
@@ -486,7 +521,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 
 	if (!err)
 	{
-		LOG_INF("Security changed: %s level %u\n", log_strdup(addr), level);
+		LOG_INF("Security changed: %s level %u", log_strdup(addr), level);
 
 		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
 		{
@@ -619,6 +654,7 @@ int ble_central_init(ble_central_init_t *p_init)
 
 	// Set this count to 0
 	atomic_set(&m_num_connected, 0);
+	atomic_set(&scan_failure, 0);
 
 	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
 	{
