@@ -94,31 +94,6 @@ static void flash_init()
 #endif
 }
 
-static void gpio_init()
-{
-	// Get the device binding
-	gpio = device_get_binding(DT_LABEL(DT_NODELABEL(gpio0)));
-
-	if (gpio == NULL)
-	{
-		LOG_ERR("%s is null!", DT_LABEL(DT_NODELABEL(gpio0)));
-		return;
-	}
-
-	int err;
-
-	/* Configure this pin as output. */
-	err = gpio_pin_configure(gpio, 31, GPIO_OUTPUT_ACTIVE);
-	if (err)
-	{
-		LOG_ERR("Unable to configure pin %d.", 31);
-		return;
-	}
-
-	/* Write "1" to this pin. */
-	err = gpio_pin_set(gpio, 31, 1);
-}
-
 /* RTC control */
 struct device *rtc;
 
@@ -156,9 +131,6 @@ static bool timer_flag = false;
 
 void main(void)
 {
-
-	/* GPIO Init */
-	gpio_init();
 
 	/* Init flash */
 	flash_init();
