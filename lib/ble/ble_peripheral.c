@@ -180,7 +180,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
     else
     {
         LOG_ERR("Security failed: %s level %u err %d", log_strdup(addr), level,
-               err);
+                err);
 
         // Disconnect on security failure
         int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -280,7 +280,7 @@ static void pairing_complete(struct bt_conn *conn, bool bonded)
 
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-    printk("Pairing completed: %s, bonded: %d\n", addr, bonded);
+    LOG_ERR("Pairing completed: %s, bonded: %d", addr, bonded);
 }
 
 static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
@@ -289,7 +289,7 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-    printk("Pairing failed conn: %s, reason %d\n", addr, reason);
+    LOG_ERR("Pairing failed conn: %s, reason %d", addr, reason);
 
     // TODO: Disconnect
 }
@@ -350,6 +350,7 @@ void ble_peripheral_write(const u8_t *data, u16_t len)
     // If not valid connection return
     if (current_conn == NULL)
     {
+        LOG_ERR("Current connection not valid!");
         return;
     }
 

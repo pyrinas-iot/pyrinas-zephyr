@@ -14,8 +14,8 @@ clean:
 
 .PHONY: flash
 flash: build
-	# @west flash -r nrfjprog
-	nrfjprog --program build/zephyr/app_signed.hex --sectorerase -s $(PROG_SERIAL)
+	@west flash -r nrfjprog
+	#nrfjprog --program build/zephyr/app_signed.hex --sectorerase -s $(PROG_SERIAL)
 	nrfjprog -r -s $(PROG_SERIAL)
 
 .PHONY: flash_all
@@ -30,8 +30,12 @@ config:
 .PHONY: load
 load: build
 	@echo "Loading app_update.bin via $(MCUMGR_SERIAL_PORT)"
-	@mcumgr --conntype=serial --connstring $(MCUMGR_SERIAL_PORT) image upload build/zephyr/app_update.bin
-	@mcumgr --conntype=serial --connstring $(MCUMGR_SERIAL_PORT) reset
+	@mcumgr --conntype=serial --connstring 'dev=$(MCUMGR_SERIAL_PORT),baud=$(MCUMGR_SERIAL_BAUD)' image upload build/zephyr/app_update.bin
+	@mcumgr --conntype=serial --connstring 'dev=$(MCUMGR_SERIAL_PORT),baud=$(MCUMGR_SERIAL_BAUD)' reset
+
+.PHONY: screen
+screen:
+	@screen $(MCUMGR_SERIAL_PORT) $(MCUMGR_SERIAL_BAUD)
 
 .PHONY: debug
 debug:

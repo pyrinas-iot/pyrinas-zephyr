@@ -138,7 +138,7 @@ static void scan_filter_match(struct bt_scan_device_info *device_info,
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(device_info->addr, addr, sizeof(addr));
-	LOG_INF("scn match: [addr: %s] [type: %d] [rssi: %d] [c: %d]", log_strdup(addr), device_info->adv_info.adv_type, device_info->adv_info.rssi, connectable);
+	LOG_INF("Scan match: [addr: %s] [type: %d] [rssi: %d] [c: %d]", log_strdup(addr), device_info->adv_info.adv_type, device_info->adv_info.rssi, connectable);
 
 	// Then connect
 }
@@ -219,7 +219,7 @@ static void auth_cancel(struct bt_conn *conn)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("Pairing cancelled: %s\n", addr);
+	LOG_INF("Pairing cancelled: %s", addr);
 }
 
 static void pairing_confirm(struct bt_conn *conn)
@@ -230,7 +230,7 @@ static void pairing_confirm(struct bt_conn *conn)
 
 	bt_conn_auth_pairing_confirm(conn);
 
-	printk("Pairing confirmed: %s\n", addr);
+	LOG_INF("Pairing confirmed: %s", addr);
 }
 
 static void pairing_complete(struct bt_conn *conn, bool bonded)
@@ -311,14 +311,43 @@ void ble_central_write(const u8_t *data, u16_t len)
 	k_work_submit(&bt_send_work);
 }
 
+static void force_disconnect(struct bt_conn *conn)
+{
+	// Disconnect from device
+	int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	if (err && (err != -ENOTCONN))
+	{
+		LOG_ERR("Cannot disconnect peer (err:%d)", err);
+	}
+}
+
 static void discovery_completed(struct bt_gatt_dm *dm, void *context)
 {
 	struct bt_gatt_nus_c *nus_c = context;
 
 	LOG_INF("Discovery complete!");
 
-	bt_gatt_nus_c_handles_assign(dm, nus_c);
-	bt_gatt_nus_c_tx_notif_enable(nus_c);
+	int err;
+
+	err = bt_gatt_nus_c_handles_assign(dm, nus_c);
+	if (err)
+	{
+		LOG_ERR("Unable to assign handles (err %d)", err);
+
+		// Disconnect from device on error
+		force_disconnect(nus_c->conn);
+		return;
+	}
+
+	err = bt_gatt_nus_c_tx_notif_enable(nus_c);
+	if (err)
+	{
+		LOG_ERR("Unable to enable notifications (err %d)", err);
+
+		// Disconnect from device on error
+		force_disconnect(nus_c->conn);
+		return;
+	}
 
 	bt_gatt_dm_data_release(dm);
 
@@ -340,6 +369,10 @@ static void discovery_completed(struct bt_gatt_dm *dm, void *context)
 			// We've found it!
 			found = true;
 
+			// Set to ready
+			atomic_set(&m_conns[i].ready, 1);
+			atomic_inc(&m_num_connected);
+
 			break;
 		}
 	}
@@ -350,24 +383,16 @@ static void discovery_completed(struct bt_gatt_dm *dm, void *context)
 		return;
 	}
 
-	// Establish pairing/security
-	int err = bt_conn_set_security(dev_conn->conn, BT_SECURITY_L2);
-	if (err)
+	// Start scanning if we're < max connections
+	if (atomic_get(&m_num_connected) < CONFIG_BT_MAX_CONN)
 	{
-		printk("Failed to set security: %d\n", err);
+		ble_central_scan_start();
 	}
 }
 
 static void discovery_service_not_found(struct bt_conn *conn, void *ctx)
 {
 	LOG_WRN("Pyrinas data service not found!");
-
-	// Disconnect from device
-	int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	if (err && (err != -ENOTCONN))
-	{
-		LOG_ERR("Cannot disconnect peer (err:%d)", err);
-	}
 }
 
 static void discovery_error_found(struct bt_conn *conn, int err, void *ctx)
@@ -375,11 +400,7 @@ static void discovery_error_found(struct bt_conn *conn, int err, void *ctx)
 	LOG_WRN("The discovery procedure failed, err %d\n", err);
 
 	// Disconnect from device
-	int ret = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	if (ret && (ret != -ENOTCONN))
-	{
-		LOG_ERR("Cannot disconnect peer (err:%d)", ret);
-	}
+	force_disconnect(conn);
 }
 
 static struct bt_gatt_dm_cb discovery_cb = {
@@ -447,36 +468,10 @@ void ble_central_scan_start()
 	LOG_INF("Scanning...");
 }
 
-static void connected(struct bt_conn *conn, u8_t conn_err)
-{
-	// int err;
-
-	// Return if there's a connection error
-	if (conn_err)
-	{
-		LOG_ERR("Failed to connect: %d", conn_err);
-
-		// Re-start scanning
-		ble_central_scan_start();
-		return;
-	}
-
-	LOG_INF("Connected");
-	gatt_discover(conn);
-
-	// TODO: only if there are more to get
-	// // Stp scanning
-	// err = bt_scan_stop();
-	// if ((!err) && (err != -EALREADY))
-	// {
-	// 	printk("Stop LE scan failed (err %d)\n", err);
-	// }
-}
-
 static void disconnected(struct bt_conn *conn, u8_t reason)
 {
 
-	printk("Disconnected. (reason 0x%02x)\n", reason);
+	LOG_INF("Disconnected. (reason 0x%02x)", reason);
 
 	bool advertise = false;
 
@@ -512,6 +507,41 @@ static void disconnected(struct bt_conn *conn, u8_t reason)
 		ble_central_scan_start();
 }
 
+static void connected(struct bt_conn *conn, u8_t conn_err)
+{
+	int err;
+
+	// Return if there's a connection error
+	if (conn_err)
+	{
+		LOG_ERR("Failed to connect: %d", conn_err);
+
+		// Undo our connection
+		disconnected(conn, conn_err);
+
+		// Re-start scanning
+		ble_central_scan_start();
+		return;
+	}
+
+	LOG_INF("Connected");
+
+	// Establish pairing/security
+	err = bt_conn_set_security(conn, BT_SECURITY_L2);
+	if (err)
+	{
+		printk("Failed to set security: %d\n", err);
+		gatt_discover(conn);
+	}
+
+	// Stop scanning
+	err = bt_scan_stop();
+	if ((!err) && (err != -EALREADY))
+	{
+		printk("Stop LE scan failed (err %d)\n", err);
+	}
+}
+
 static void security_changed(struct bt_conn *conn, bt_security_t level,
 														 enum bt_security_err err)
 {
@@ -527,15 +557,8 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 		{
 			if (m_conns[i].conn == conn)
 			{
-				atomic_set(&m_conns[i].ready, 1);
-				atomic_inc(&m_num_connected);
-
-				// Start scanning if we're < max connections
-				if (atomic_get(&m_num_connected) < CONFIG_BT_MAX_CONN)
-				{
-					ble_central_scan_start();
-				}
-
+				// Start discovery once security has changed
+				gatt_discover(conn);
 				break;
 			}
 		}
