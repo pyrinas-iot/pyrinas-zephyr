@@ -32,7 +32,7 @@ extern "C"
  *
  *  @return Zero in case of success and error code in case of error.
  */
-  int bt_gatt_pyrinas_notify(char *data, u16_t length);
+  int bt_gatt_pyrinas_notify(char *data, uint16_t length);
 
   /** @brief Sets the callback
  *

@@ -77,11 +77,11 @@ static int pcf85063a_get_value(struct device *dev, u32_t *ticks)
 }
 
 static int pcf85063a_set_alarm(
-		struct device *dev, u8_t chan_id, const struct counter_alarm_cfg *alarm_cfg)
+		struct device *dev, uint8_t chan_id, const struct counter_alarm_cfg *alarm_cfg)
 {
 	ARG_UNUSED(chan_id);
 
-	u8_t ticks = (u8_t)alarm_cfg->ticks;
+	uint8_t ticks = (uint8_t)alarm_cfg->ticks;
 
 	// Get the data pointer
 	struct pcf85063a_data *data = pcf85063a_dev->driver_data;
@@ -90,8 +90,8 @@ static int pcf85063a_set_alarm(
 	int ret;
 
 	// Clear any flags in CTRL2
-	u8_t reg = 0;
-	u8_t mask = PCF85063A_CTRL2_TF;
+	uint8_t reg = 0;
+	uint8_t mask = PCF85063A_CTRL2_TF;
 
 	ret = i2c_reg_update_byte(data->i2c, DT_REG_ADDR(DT_DRV_INST(0)),
 														PCF85063A_CTRL2, mask, reg);
@@ -128,7 +128,7 @@ static int pcf85063a_set_alarm(
 	return 0;
 }
 
-static int pcf85063a_cancel_alarm(struct device *dev, u8_t chan_id)
+static int pcf85063a_cancel_alarm(struct device *dev, uint8_t chan_id)
 {
 
 	// Get the data pointer
@@ -138,8 +138,8 @@ static int pcf85063a_cancel_alarm(struct device *dev, u8_t chan_id)
 	int ret;
 
 	// Clear any flags in CTRL2
-	u8_t reg = 0;
-	u8_t mask = PCF85063A_CTRL2_TF;
+	uint8_t reg = 0;
+	uint8_t mask = PCF85063A_CTRL2_TF;
 
 	ret = i2c_reg_update_byte(data->i2c, DT_REG_ADDR(DT_DRV_INST(0)),
 														PCF85063A_CTRL2, mask, reg);
@@ -179,7 +179,7 @@ static u32_t pcf85063a_get_pending_int(struct device *dev)
 	struct pcf85063a_data *data = pcf85063a_dev->driver_data;
 
 	// Start with 0
-	u8_t reg = 0;
+	uint8_t reg = 0;
 
 	// Write back the updated register value
 	int ret = i2c_reg_read_byte(data->i2c, DT_REG_ADDR(DT_DRV_INST(0)),

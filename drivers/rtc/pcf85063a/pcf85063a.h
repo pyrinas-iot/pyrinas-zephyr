@@ -105,13 +105,13 @@
 
 struct pcf85063a_time
 {
-	u16_t year;
-	u8_t month;
-	u8_t day;
+	uint16_t year;
+	uint8_t month;
+	uint8_t day;
 	bool am_pm;
-	u8_t hour;
-	u8_t minute;
-	u8_t second;
+	uint8_t hour;
+	uint8_t minute;
+	uint8_t second;
 };
 
 struct pcf85063a_data
@@ -124,7 +124,7 @@ int pcf85063a_init(struct device *dev);
 int pcf85063a_osc_en(bool enabled);
 int pcf85063a_set_time(struct pcf85063a_time *time);
 int pcf85063a_get_time(struct pcf85063a_time *time);
-int pcf85063a_set_timer(u8_t seconds);
+int pcf85063a_set_timer(uint8_t seconds);
 int pcf85063a_timer_en(bool enabled);
 
 #endif /* ZEPHYR_DRIVERS_RTC_PCF85063A_PCF85063A_H_ */

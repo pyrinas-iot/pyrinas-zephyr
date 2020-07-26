@@ -10,5 +10,7 @@
 #include <zephyr.h>
 
 #include <ble/ble_m.h>
+#include <cellular/cellular.h>
+#include <pyrinas_cloud/pyrinas_cloud.h>
 
 #endif

@@ -22,15 +22,15 @@ typedef struct
 
 typedef struct
 {
-    u8_t *data;
-    u16_t len;
+    uint8_t *data;
+    uint16_t len;
 } ble_central_broadcast_t;
 
 //TODO: document this.
 bool ble_central_is_connected(void);
 void ble_central_disconnect(void);
 void ble_central_attach_handler(encoded_data_handler_t raw_evt_handler);
-void ble_central_write(const u8_t *data, u16_t size);
+void ble_central_write(const uint8_t *data, uint16_t size);
 void ble_central_scan_start(void);
 int ble_central_init(ble_central_init_t *init);
 void ble_central_ready(void);

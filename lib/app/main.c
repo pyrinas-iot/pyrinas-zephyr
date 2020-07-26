@@ -11,7 +11,17 @@
 #include <settings/settings.h>
 #include <drivers/counter.h>
 #include <ble/ble_m.h>
+#include <bsd.h>
+#include <modem/lte_lc.h>
+#include <modem/bsdlib.h>
+#include <modem/at_cmd.h>
+#include <modem/at_notif.h>
+#include <dfu/mcuboot.h>
 #include <app/app.h>
+
+#include <ble/ble_m.h>
+#include <cellular/cellular.h>
+#include <pyrinas_cloud/pyrinas_cloud.h>
 
 #ifdef CONFIG_MCUMGR_CMD_IMG_MGMT
 #include "img_mgmt/img_mgmt.h"
@@ -22,6 +32,8 @@ LOG_MODULE_REGISTER(main);
 
 #define GPIO0 DT_LABEL(DT_NODELABEL(gpio0))
 struct device *gpio;
+
+static K_SEM_DEFINE(main_thread_proceed, 0, 1);
 
 #if defined(CONFIG_FILE_SYSTEM_LITTLEFS)
 #include <fs/fs.h>
@@ -132,6 +144,46 @@ static bool timer_flag = false;
 void main(void)
 {
 
+	int err;
+
+#if !defined(CONFIG_BSD_LIBRARY_SYS_INIT)
+	err = bsdlib_init();
+#else
+	/* If bsdlib is initialized on post-kernel we should
+	 * fetch the returned error code instead of bsdlib_init
+	 */
+	err = bsdlib_get_init_ret();
+#endif
+	switch (err)
+	{
+	case MODEM_DFU_RESULT_OK:
+		printk("Modem firmware update successful!\n");
+		printk("Modem will run the new firmware after reboot\n");
+		k_thread_suspend(k_current_get());
+		break;
+	case MODEM_DFU_RESULT_UUID_ERROR:
+	case MODEM_DFU_RESULT_AUTH_ERROR:
+		printk("Modem firmware update failed\n");
+		printk("Modem will run non-updated firmware on reboot.\n");
+		break;
+	case MODEM_DFU_RESULT_HARDWARE_ERROR:
+	case MODEM_DFU_RESULT_INTERNAL_ERROR:
+		printk("Modem firmware update failed\n");
+		printk("Fatal error.\n");
+		break;
+	case -1:
+		printk("Could not initialize bsdlib.\n");
+		printk("Fatal error.\n");
+		return;
+	default:
+		break;
+	}
+
+	/* All initializations were successful mark image as working so that we
+	 * will not revert upon reboot.
+	 */
+	boot_write_img_confirmed();
+
 	/* Init flash */
 	flash_init();
 
@@ -145,12 +197,31 @@ void main(void)
 	rtc_init();
 #endif
 
-	// User Setup function
+	/* Configure modem */
+	cellular_configure();
+
+	/* Configure modem params */
+	cellular_info_init();
+
+	/* Init Pyrinas Cloud */
+	pyrinas_cloud_init();
+
+	/* Connect */
+	pyrinas_cloud_connect();
+
+	/* User Setup function */
 	setup();
 
-	while (1)
-	{
+	/* Start main thread */
+	k_sem_give(&main_thread_proceed);
+}
 
+void main_thread_fn()
+{
+	k_sem_take(&main_thread_proceed, K_FOREVER);
+
+	while (true)
+	{
 #ifdef CONFIG_PCF85063A
 		if (!timer_flag)
 		{
@@ -170,15 +241,18 @@ void main(void)
 		}
 #endif
 
-		// User loop function
+		/* User loop function */
 		loop();
 
 #ifdef PYRINAS_ENABLED
-		// BLE Process
+		/* BLE Process */
 		ble_process();
 #endif
-
-		// Yeild so other threads can work
-		k_yield();
 	}
 }
+
+#define THREAD_STACK_SIZE KB(2)
+static K_THREAD_STACK_DEFINE(main_thread_stack, THREAD_STACK_SIZE);
+K_THREAD_DEFINE(main_thread, K_THREAD_STACK_SIZEOF(main_thread_stack),
+								main_thread_fn, NULL, NULL, NULL,
+								K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);

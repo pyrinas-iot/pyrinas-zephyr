@@ -8,7 +8,7 @@ manifest:
   projects:
     - name: nrf
       remote: nrfconnect
-      revision: v1.3.0
+      revision: bce1d6bc5b3b34587aaeeccc2fc377c534935364
       import: true
     - name: nanopb
       repo-path: nanopb

@@ -1,0 +1,5 @@
+if (CONFIG_PYRINAS_CLOUD_ENABLED)
+zephyr_library_sources(pyrinas_cloud.c)
+zephyr_library_sources(pyrinas_cloud_codec.c)
+zephyr_library_sources(pyrinas_cloud_helper.c)
+endif()

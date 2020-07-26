@@ -108,7 +108,7 @@ void ble_peripheral_advertising_start(void)
     LOG_INF("Advertising successfully started");
 }
 
-static void exchange_func(struct bt_conn *conn, u8_t err,
+static void exchange_func(struct bt_conn *conn, uint8_t err,
                           struct bt_gatt_exchange_params *params)
 {
     if (!err)
@@ -118,7 +118,7 @@ static void exchange_func(struct bt_conn *conn, u8_t err,
     }
 }
 
-static void connected(struct bt_conn *conn, u8_t err)
+static void connected(struct bt_conn *conn, uint8_t err)
 {
     if (err)
     {
@@ -140,7 +140,7 @@ static void connected(struct bt_conn *conn, u8_t err)
     }
 }
 
-static void disconnected(struct bt_conn *conn, u8_t reason)
+static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
     LOG_INF("Disconnected (reason 0x%02x)\n", reason);
 
@@ -300,8 +300,8 @@ static struct bt_conn_auth_cb conn_auth_callbacks = {
     .pairing_complete = pairing_complete,
     .pairing_failed = pairing_failed};
 
-static void bt_receive_cb(struct bt_conn *conn, const u8_t *const data,
-                          u16_t len)
+static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
+                          uint16_t len)
 {
     // Forward it back if the evt handler is valid
     if (m_evt_cb)
@@ -344,7 +344,7 @@ void ble_peripheral_ready()
     smp_bt_register();
 }
 
-void ble_peripheral_write(const u8_t *data, u16_t len)
+void ble_peripheral_write(const uint8_t *data, uint16_t len)
 {
 
     // If not valid connection return

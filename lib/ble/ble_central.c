@@ -257,7 +257,7 @@ static struct bt_conn_auth_cb conn_auth_callbacks = {
 		.pairing_complete = pairing_complete,
 		.pairing_failed = pairing_failed};
 
-void ble_central_write(const u8_t *data, u16_t len)
+void ble_central_write(const uint8_t *data, uint16_t len)
 {
 
 	bool ready = false;
@@ -468,7 +468,7 @@ void ble_central_scan_start()
 	LOG_INF("Scanning...");
 }
 
-static void disconnected(struct bt_conn *conn, u8_t reason)
+static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 
 	LOG_INF("Disconnected. (reason 0x%02x)", reason);
@@ -507,7 +507,7 @@ static void disconnected(struct bt_conn *conn, u8_t reason)
 		ble_central_scan_start();
 }
 
-static void connected(struct bt_conn *conn, u8_t conn_err)
+static void connected(struct bt_conn *conn, uint8_t conn_err)
 {
 	int err;
 
@@ -581,7 +581,7 @@ static struct bt_conn_cb conn_callbacks = {
 		.connected = connected,
 		.disconnected = disconnected,
 		.security_changed = security_changed};
-static void ble_data_sent(void *ctx, u8_t err, const u8_t *const data, u16_t len)
+static void ble_data_sent(void *ctx, uint8_t err, const uint8_t *const data, uint16_t len)
 {
 
 	bool has_work = false;
@@ -611,7 +611,7 @@ static void ble_data_sent(void *ctx, u8_t err, const u8_t *const data, u16_t len
 		k_work_submit(&bt_send_work);
 }
 
-static u8_t ble_data_received(void *ctx, const u8_t *const data, u16_t len)
+static uint8_t ble_data_received(void *ctx, const uint8_t *const data, uint16_t len)
 {
 
 	// Sends the data forward if the callback is valid
