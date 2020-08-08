@@ -1,4 +1,6 @@
 
+DEFAULT_MCUMGR_TARGET := serial
+
 # Default step is to runt the build recipe
 default: build
 
@@ -30,8 +32,12 @@ config:
 .PHONY: load
 load: build
 	@echo "Loading app_update.bin via $(MCUMGR_SERIAL_PORT)"
-	@mcumgr --conntype=serial --connstring 'dev=$(MCUMGR_SERIAL_PORT),baud=$(MCUMGR_SERIAL_BAUD)' image upload build/zephyr/app_update.bin
-	@mcumgr --conntype=serial --connstring 'dev=$(MCUMGR_SERIAL_PORT),baud=$(MCUMGR_SERIAL_BAUD)' reset
+	@newtmgr -c $(DEFAULT_MCUMGR_TARGET) image upload build/zephyr/app_update.bin
+	@newtmgr -c $(DEFAULT_MCUMGR_TARGET) reset
+
+.PHONY:reset
+reset:
+	newtmgr -c $(DEFAULT_MCUMGR_TARGET) reset
 
 .PHONY: screen
 screen:
