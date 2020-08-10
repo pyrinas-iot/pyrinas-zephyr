@@ -12,10 +12,11 @@ $(info PROG_PORT not set. Using default of $(PROG_PORT))
 endif
 
 # This should not change.
-BOARD_VARIANT := circuitdojo_feather_nrf9160_ns
+BOARD_VARIANT := circuitdojo_feather_nrf9160ns
 
 # Note, this may be different on your machine. Set MCUMGR_SERIAL_PORT accordingly.
 MCUMGR_SERIAL_PORT:= /dev/tty.SLAB_USBtoUART
+MCUMGR_SERIAL_BAUD:= 115200
 
 # Common Makefile shared for all Pyrinas projects
 include ../../lib/Makefile.common

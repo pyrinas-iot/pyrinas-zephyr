@@ -43,14 +43,14 @@ struct bt_le_ext_adv *adv = NULL;
 
 /* Raw event handler */
 static encoded_data_handler_t m_evt_cb = NULL;
-static u32_t nus_max_send_len;
+static uint32_t nus_max_send_len;
 
 /* Network buffer */
 K_MSGQ_DEFINE(m_peripheral_event_queue, sizeof(ble_fifo_data_t), 20, BLE_QUEUE_ALIGN);
 K_SEM_DEFINE(nus_write_sem, 1, 1);
 
 /* Advertising data */
-static const struct bt_data ad[] = {
+static const struct bt_data ad[] ={
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
     BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, (sizeof(CONFIG_BT_DEVICE_NAME) - 1)),
 };
@@ -72,12 +72,11 @@ void ble_peripheral_advertising_start(void)
     {
 
         // TODO: Advertising parameters. Most important being `BT_LE_ADV_OPT_CODED` and `BT_LE_ADV_OPT_EXT_ADV`
-        // BT_LE_ADV_OPT_CODED | BT_LE_ADV_OPT_EXT_ADV
         struct bt_le_adv_param *adv_param =
-            BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
-                            BT_GAP_ADV_FAST_INT_MIN_2,
-                            BT_GAP_ADV_FAST_INT_MAX_2,
-                            NULL);
+            BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_CODED | BT_LE_ADV_OPT_EXT_ADV,
+                BT_GAP_ADV_FAST_INT_MIN_2,
+                BT_GAP_ADV_FAST_INT_MAX_2,
+                NULL);
 
         LOG_DBG("bt_le_ext_adv_create");
         err = bt_le_ext_adv_create(adv_param, NULL, &adv);
@@ -89,7 +88,7 @@ void ble_peripheral_advertising_start(void)
 
         // Set the advertising data
         err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad),
-                                     NULL, 0);
+            NULL, 0);
         if (err)
         {
             LOG_ERR("Unable to set advertising data (err %d)\n", err);
@@ -109,7 +108,7 @@ void ble_peripheral_advertising_start(void)
 }
 
 static void exchange_func(struct bt_conn *conn, uint8_t err,
-                          struct bt_gatt_exchange_params *params)
+    struct bt_gatt_exchange_params *params)
 {
     if (!err)
     {
@@ -164,7 +163,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
-                             enum bt_security_err err)
+    enum bt_security_err err)
 {
     char addr[BT_ADDR_LE_STR_LEN];
 
@@ -180,7 +179,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
     else
     {
         LOG_ERR("Security failed: %s level %u err %d", log_strdup(addr), level,
-                err);
+            err);
 
         // Disconnect on security failure
         int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
@@ -191,7 +190,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
     }
 }
 
-static struct bt_conn_cb conn_callbacks = {
+static struct bt_conn_cb conn_callbacks ={
     .connected = connected,
     .disconnected = disconnected,
     .security_changed = security_changed,
@@ -247,7 +246,7 @@ static void bt_send_work_handler(struct k_work *work)
 
     // Empty the queue if notifications are disabled
     while (k_msgq_num_used_get(&m_peripheral_event_queue) != 0 &&
-           notif_disabled)
+        notif_disabled)
     {
         // Purge all un-recieved messages
         k_msgq_purge(&m_peripheral_event_queue);
@@ -294,14 +293,14 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
     // TODO: Disconnect
 }
 
-static struct bt_conn_auth_cb conn_auth_callbacks = {
+static struct bt_conn_auth_cb conn_auth_callbacks ={
     .cancel = auth_cancel,
     .pairing_confirm = pairing_confirm,
     .pairing_complete = pairing_complete,
-    .pairing_failed = pairing_failed};
+    .pairing_failed = pairing_failed };
 
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
-                          uint16_t len)
+    uint16_t len)
 {
     // Forward it back if the evt handler is valid
     if (m_evt_cb)
@@ -323,7 +322,7 @@ static void bt_sent_cb(struct bt_conn *conn)
     k_work_submit(&bt_send_work);
 }
 
-static struct bt_gatt_nus_cb nus_cb = {
+static struct bt_gatt_nus_cb nus_cb ={
     .received_cb = bt_receive_cb,
     .sent_cb = bt_sent_cb,
 };

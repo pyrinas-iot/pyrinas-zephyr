@@ -34,10 +34,10 @@ LOG_MODULE_REGISTER(ble_m);
                 (DT_GPIO_FLAGS(node, gpios)),        \
                 (0))
 
-/*
- * The led0 devicetree alias is optional. If present, we'll use it
- * to turn on the LED whenever the button is pressed.
- */
+ /*
+  * The led0 devicetree alias is optional. If present, we'll use it
+  * to turn on the LED whenever the button is pressed.
+  */
 
 #define LED2_NODE DT_ALIAS(led2)
 
@@ -49,7 +49,7 @@ LOG_MODULE_REGISTER(ble_m);
 
 #define member_size(type, member) sizeof(((type *)0)->member)
 
-// Queue definition
+  // Queue definition
 K_MSGQ_DEFINE(m_event_queue, BLE_INCOMING_PROTOBUF_SIZE, 20, BLE_QUEUE_ALIGN);
 
 static ble_subscription_list_t m_subscribe_list; /**< Use for adding/removing subscriptions */
@@ -126,11 +126,11 @@ bool ble_is_connected(void)
 
     bool is_connected = false;
 
-#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    #if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
     is_connected = ble_peripheral_is_connected();
-#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    #elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
     is_connected = ble_central_is_connected();
-#endif
+    #endif
     // LOG_INF("%sconnected. %d", is_connected ? "" : "not ", m_config.mode);
 
     return is_connected;
@@ -138,11 +138,11 @@ bool ble_is_connected(void)
 
 void ble_disconnect(void)
 {
-#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    #if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
     ble_peripheral_disconnect();
-#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    #elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
     ble_central_disconnect();
-#endif
+    #endif
 }
 
 void ble_publish(char *name, char *data)
@@ -166,7 +166,7 @@ void ble_publish(char *name, char *data)
     }
 
     // Create an event.
-    protobuf_event_t event = {
+    protobuf_event_t event ={
         .name.size = name_length,
         .data.size = data_length,
     };
@@ -201,11 +201,11 @@ void ble_publish_raw(protobuf_event_t event)
     }
 
     // TODO: send to connected device(s)
-#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    #if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
     ble_peripheral_write(output, ostream.bytes_written);
-#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    #elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
     ble_central_write(output, ostream.bytes_written);
-#endif
+    #endif
 }
 
 void ble_subscribe(char *name, susbcribe_handler_t handler)
@@ -227,8 +227,8 @@ void ble_subscribe(char *name, susbcribe_handler_t handler)
         return;
     }
 
-    ble_subscription_handler_t subscriber = {
-        .evt_handler = handler};
+    ble_subscription_handler_t subscriber ={
+        .evt_handler = handler };
 
     // Copy over info to structure.
     subscriber.name.size = name_length;
@@ -253,16 +253,16 @@ void ble_subscribe(char *name, susbcribe_handler_t handler)
 void advertising_start(void)
 {
 
-#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    #if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
     ble_peripheral_advertising_start();
-#endif
+    #endif
 }
 
 void scan_start(void)
 {
-#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    #if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
     ble_central_scan_start();
-#endif
+    #endif
 }
 
 /**@brief Function for queuing events so they can read in main context.
@@ -354,11 +354,11 @@ static void ble_ready(int err)
     m_init_complete = true;
 
     // Call the ready functions for peripheral and central
-#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    #if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
     ble_central_ready();
-#elif defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    #elif defined(CONFIG_PYRINAS_PERIPH_ENABLED)
     ble_peripheral_ready();
-#endif
+    #endif
 }
 
 #ifdef LED2_GPIO_LABEL
@@ -378,7 +378,7 @@ static struct device *initialize_led(void)
     if (ret != 0)
     {
         printk("Error %d: failed to configure LED device %s pin %d\n",
-               ret, LED2_GPIO_LABEL, LED2_GPIO_PIN);
+            ret, LED2_GPIO_LABEL, LED2_GPIO_PIN);
         return NULL;
     }
 
@@ -413,49 +413,49 @@ void ble_stack_init(ble_stack_init_t *p_init)
     // Initialize connection LED
     led = initialize_led();
 
-#ifdef LED2_GPIO_LABEL
+    #ifdef LED2_GPIO_LABEL
     // Start message timer
     k_timer_start(&led_flash_timer, K_SECONDS(1), K_NO_WAIT);
-#endif
+    #endif
 
-// Get the port involved
-#if CONFIG_BOARD_CIRCUITDOJO_FEATHER_NRF9160_NS && defined(CONFIG_HCI_NCP_RST_PORT) && defined(CONFIG_HCI_NCP_RST_PIN)
+    // Get the port involved
+    #if CONFIG_BOARD_CIRCUITDOJO_FEATHER_NRF9160NS && defined(CONFIG_HCI_NCP_RST_PORT) && defined(CONFIG_HCI_NCP_RST_PIN)
     struct device *port;
     port = device_get_binding(CONFIG_HCI_NCP_RST_PORT);
     __ASSERT(port, "Error: Bad port for boot HCI reset.\n");
 
     err = gpio_pin_configure(port, CONFIG_HCI_NCP_RST_PIN, GPIO_OUTPUT_INACTIVE);
     __ASSERT(err == 0, "Error: Unable to configure pin: %d", err);
-#endif
+    #endif
 
     LOG_INF("Initializing Bluetooth..");
     err = bt_enable(ble_ready);
     __ASSERT(err == 0, "Error: Bluetooth init failed (err %d)\n", err);
 
-// Delay so both IC's are in sync
-#if CONFIG_BOARD_CIRCUITDOJO_FEATHER_NRF9160_NS && defined(CONFIG_HCI_NCP_RST_PORT) && defined(CONFIG_HCI_NCP_RST_PIN)
+    // Delay so both IC's are in sync
+    #if CONFIG_BOARD_CIRCUITDOJO_FEATHER_NRF9160NS && defined(CONFIG_HCI_NCP_RST_PORT) && defined(CONFIG_HCI_NCP_RST_PIN)
     k_msleep(1000);
 
     // Release
     err = gpio_pin_configure(port, CONFIG_HCI_NCP_RST_PIN, GPIO_DISCONNECTED);
     __ASSERT(err == 0, "Error: Unable to configure pin: %d", err);
-#endif
+    #endif
 
-#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    #if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
     // Attach handler
     ble_peripheral_attach_handler(ble_evt_handler);
 
     // Init peripheral mode
     ble_peripheral_init();
-#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    #elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
     // First, attach handler
     ble_central_attach_handler(ble_evt_handler);
 
     // Initialize
     ble_central_init(&m_config.central_config);
-#else
-#error CONFIG_PYRINAS_PERIPH_ENABLED or CONFIG_PYRINAS_CENTRAL_ENABLED must be defined.
-#endif
+    #else
+    #error CONFIG_PYRINAS_PERIPH_ENABLED or CONFIG_PYRINAS_CENTRAL_ENABLED must be defined.
+    #endif
 }
 
 // Passthrough function for subscribing to RAW events
@@ -472,10 +472,10 @@ void ble_process()
     if (!m_init_complete)
         return;
 
-// Process any central tasks
-#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    // Process any central tasks
+    #if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
     ble_central_process();
-#endif
+    #endif
 }
 
 // TODO: more optimized way of doing this?
