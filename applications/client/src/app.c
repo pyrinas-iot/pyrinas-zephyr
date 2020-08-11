@@ -41,21 +41,24 @@ struct device *button;
 static void my_expiry_function(struct k_timer *timer);
 K_TIMER_DEFINE(my_timer, my_expiry_function, NULL);
 
+char count[10];
+int tx_counter = 0;
+
 static void my_expiry_function(struct k_timer *timer)
 {
     if (ble_is_connected())
     {
-        ble_publish("pong", "");
+        snprintf(count, sizeof(count), "%i", tx_counter++);
+        ble_publish("pong", count);
+        LOG_INF("sending: \"%s\" \"%s\"", "pong", log_strdup(count));
     }
 
-    k_timer_start(&my_timer, K_SECONDS(1), K_NO_WAIT);
+    k_timer_start(&my_timer, K_MSEC(500), K_NO_WAIT);
 }
-
-uint32_t counter = 0;
 
 void evt_cb(char *name, char *data)
 {
-    LOG_INF("%d \"%s\" \"%s\"", counter++, log_strdup(name), log_strdup(data));
+    LOG_INF("\"%s\" \"%s\"", log_strdup(name), log_strdup(data));
 }
 
 void button_pressed(struct device *dev, struct gpio_callback *cb,

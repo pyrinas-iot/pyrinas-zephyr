@@ -11,7 +11,6 @@
 #include <settings/settings.h>
 #include <drivers/counter.h>
 #include <ble/ble_m.h>
-#include <bsd.h>
 #include <modem/lte_lc.h>
 #include <modem/bsdlib.h>
 #include <modem/at_cmd.h>
@@ -256,7 +255,7 @@ void main_thread_fn()
 		}
 }
 
-#define THREAD_STACK_SIZE KB(2)
+#define THREAD_STACK_SIZE KB(4)
 static K_THREAD_STACK_DEFINE(main_thread_stack, THREAD_STACK_SIZE);
 K_THREAD_DEFINE(main_thread, K_THREAD_STACK_SIZEOF(main_thread_stack),
 		main_thread_fn, NULL, NULL, NULL,

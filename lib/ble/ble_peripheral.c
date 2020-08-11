@@ -47,7 +47,6 @@ static uint32_t nus_max_send_len;
 
 /* Network buffer */
 K_MSGQ_DEFINE(m_peripheral_event_queue, sizeof(ble_fifo_data_t), 20, BLE_QUEUE_ALIGN);
-K_SEM_DEFINE(nus_write_sem, 1, 1);
 
 /* Advertising data */
 static const struct bt_data ad[] ={
@@ -152,9 +151,6 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     // Remove data from queue
     k_msgq_purge(&m_peripheral_event_queue);
 
-    // Release semaphore
-    k_sem_give(&nus_write_sem);
-
     // Set as not ready
     atomic_set(&m_ready, 0);
 
@@ -208,14 +204,6 @@ static void bt_send_work_handler(struct k_work *work)
         return;
     }
 
-    // get semaphore
-    err = k_sem_take(&nus_write_sem, K_NO_WAIT);
-    if (err)
-    {
-        LOG_WRN("Unable to take semaphore.\n");
-        return;
-    }
-
     // Static ble_payload
     static ble_fifo_data_t ble_payload;
 
@@ -224,7 +212,6 @@ static void bt_send_work_handler(struct k_work *work)
     if (err)
     {
         LOG_WRN("Unable to get data from queue");
-        k_sem_give(&nus_write_sem);
         return;
     }
 
@@ -236,21 +223,11 @@ static void bt_send_work_handler(struct k_work *work)
         LOG_WRN("Not subscribed!");
         notif_disabled = true;
     }
-
-    // Otherwise check if overall error
-    if (err)
+    else if (err) // Otherwise check if overall error
     {
         LOG_WRN("Error sending nus data. (err %d)", err);
-        k_sem_give(&nus_write_sem);
     }
 
-    // Empty the queue if notifications are disabled
-    while (k_msgq_num_used_get(&m_peripheral_event_queue) != 0 &&
-        notif_disabled)
-    {
-        // Purge all un-recieved messages
-        k_msgq_purge(&m_peripheral_event_queue);
-    }
 }
 
 static void auth_cancel(struct bt_conn *conn)
@@ -302,6 +279,7 @@ static struct bt_conn_auth_cb conn_auth_callbacks ={
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
     uint16_t len)
 {
+
     // Forward it back if the evt handler is valid
     if (m_evt_cb)
         m_evt_cb(data, len);
@@ -309,10 +287,6 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 
 static void bt_sent_cb(struct bt_conn *conn)
 {
-
-    // Release semaphore
-    k_sem_give(&nus_write_sem);
-
     // Check if empty
     if (k_msgq_num_used_get(&m_peripheral_event_queue) == 0)
     {

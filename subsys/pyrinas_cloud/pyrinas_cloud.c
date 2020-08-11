@@ -282,8 +282,11 @@ static void on_connect_fn(struct k_work *unused)
     /* Trigger OTA check */
     if (atomic_get(&ota_state_s) == ota_state_ready)
     {
-        /* Subscribe */
+        /* Subscribe to OTA topic */
         subscribe(ota_sub_topic, strlen(ota_sub_topic));
+
+        /* Subscribe to Application topic */
+        subscribe(application_sub_topic, strlen(application_sub_topic));
 
         publish_ota_check();
     }
@@ -357,6 +360,13 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             /* Cancel ota if the version is not valid */
             k_work_submit(&ota_done_work);
         }
+    }
+    else if (strcmp(application_sub_topic, topic) == 0) {
+        printk("application sub topic\n");
+
+        // TODO: decode application event
+
+        // TODO:: callback to main context
     }
 }
 
@@ -789,6 +799,9 @@ void pyrinas_cloud_init()
 
     /* Get the IMEI */
     get_imei(imei, sizeof(imei));
+
+    /* Print the IMEI */
+    printk("imei: %s\n", imei);
 
     /* Init FOTA client */
     fota_download_init(fota_evt);

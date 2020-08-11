@@ -16,12 +16,6 @@ clean:
 
 .PHONY: flash
 flash: build
-	@west flash -r nrfjprog
-	#nrfjprog --program build/zephyr/app_signed.hex --sectorerase -s $(PROG_SERIAL)
-	nrfjprog -r -s $(PROG_SERIAL)
-
-.PHONY: flash_all
-flash_all: build
 	nrfjprog --program build/zephyr/merged.hex --sectorerase -s $(PROG_SERIAL)
 	nrfjprog -r -s $(PROG_SERIAL)
 

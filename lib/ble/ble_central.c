@@ -35,9 +35,6 @@ struct ble_nus_c_connection
 		/* Conn tracking */
 		struct bt_conn *conn;
 
-		/* Semaphore */
-		struct k_sem sem;
-
 		/* Queue related*/
 		struct k_msgq q;
 		char __aligned(4) q_buf[BLE_CENTRAL_QUEUE_SIZE * sizeof(ble_fifo_data_t)];
@@ -55,7 +52,7 @@ static encoded_data_handler_t m_evt_cb = NULL;
 
 /* Related work handler for rx ring buf*/
 static void bt_send_work_handler(struct k_work *work);
-static K_WORK_DEFINE(bt_send_work, bt_send_work_handler);
+static struct k_delayed_work bt_send_work;
 
 /* Storing static config*/
 static ble_central_init_t m_config;
@@ -76,6 +73,7 @@ void ble_central_process(void)
 static void bt_send_work_handler(struct k_work *work)
 {
 		int err;
+		bool schedule_work = false;
 
 		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
 		{
@@ -88,18 +86,12 @@ static void bt_send_work_handler(struct k_work *work)
 						continue;
 				}
 
+				// if (bt_gatt_nus_c_send_is_busy(&m_conns[i].nus_c)) {
+				// 		schedule_work = true;
+				// 		continue;
+				// }
+
 				LOG_DBG("%d: ready!", i);
-
-				// Tries to take immediately, if not, there's an operation still going.
-				// This will get triggered again once it's done..
-				err = k_sem_take(&m_conns[i].sem, K_NO_WAIT);
-				if (err)
-				{
-						LOG_WRN("Unable to take semaphore.\n");
-						continue;
-				}
-
-				LOG_DBG("%d: sem take!", i);
 
 				// Static event
 				static ble_fifo_data_t ble_payload;
@@ -109,12 +101,9 @@ static void bt_send_work_handler(struct k_work *work)
 				if (err)
 				{
 						LOG_WRN("%d Unable to get data from queue", i);
-						k_sem_give(&m_conns[i].sem);
 						continue;
 				}
-
-				LOG_DBG("%d: msg get!", i);
-
+				
 				// Send the data
 				// ! This call is asyncronous. Need to call semaphore and then release once data is sent.
 				err = bt_gatt_nus_c_send(&m_conns[i].nus_c, ble_payload.data, ble_payload.len);
@@ -123,10 +112,14 @@ static void bt_send_work_handler(struct k_work *work)
 						LOG_ERR("Failed to send data over BLE connection"
 								"(err %d)",
 								err);
-						k_sem_give(&m_conns[i].sem);
 				}
 
 				LOG_DBG("%d: msg send!", i);
+		}
+
+		// Schedule work to get this done
+		if (schedule_work) {
+				k_delayed_work_submit(&bt_send_work, K_MSEC(10));
 		}
 }
 
@@ -314,7 +307,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
 		}
 
 		// Start the worker thread
-		k_work_submit(&bt_send_work);
+		k_delayed_work_submit(&bt_send_work, K_NO_WAIT);
 }
 
 static void force_disconnect(struct bt_conn *conn)
@@ -605,6 +598,8 @@ static void ble_data_sent(void *ctx, uint8_t err, const uint8_t *const data, uin
 
 		bool has_work = false;
 
+		LOG_DBG("ble data sent!");
+
 		// See which connection this belongs to
 		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
 		{
@@ -618,16 +613,13 @@ static void ble_data_sent(void *ctx, uint8_t err, const uint8_t *const data, uin
 								has_work = true;
 						}
 
-						// Release so more messages can be sent
-						k_sem_give(&m_conns[i].sem);
-
 						break;
 				}
 		}
 
 		// Check if there's more work to do
 		if (has_work)
-				k_work_submit(&bt_send_work);
+				k_delayed_work_submit(&bt_send_work, K_NO_WAIT);
 }
 
 static uint8_t ble_data_received(void *ctx, const uint8_t *const data, uint16_t len)
@@ -698,18 +690,13 @@ int ble_central_init(ble_central_init_t *p_init)
 		atomic_set(&m_num_connected, 0);
 		atomic_set(&scan_failure, 0);
 
+		/* Set up work */
+		k_delayed_work_init(&bt_send_work, bt_send_work_handler);
+
 		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
 		{
 				// Set the active atomic var to 0
 				atomic_set(&m_conns[i].ready, 0);
-
-				// Init the semaphore
-				err = k_sem_init(&m_conns[i].sem, 1, 1);
-				if (err)
-				{
-						LOG_ERR("Unable to init semaphore.");
-						return err;
-				}
 
 				// Init the msgq
 				k_msgq_init(&m_conns[i].q, m_conns[i].q_buf, sizeof(ble_fifo_data_t), BLE_CENTRAL_QUEUE_SIZE);

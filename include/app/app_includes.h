@@ -8,6 +8,7 @@
 #define APP_INCLUDES_H
 
 #include <zephyr.h>
+#include <stdio.h>
 
 #include <ble/ble_m.h>
 #include <cellular/cellular.h>
