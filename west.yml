@@ -3,18 +3,11 @@ manifest:
   remotes:
     - name: nrfconnect
       url-base: https://github.com/nrfconnect
-    - name: nanopb
-      url-base: https://github.com/nanopb
   projects:
     - name: nrf
       remote: nrfconnect
       revision: 4b012fb4882f0ddd3de9f339ebc5a3f1c3cacd4a
       import: true
-    - name: nanopb
-      repo-path: nanopb
-      revision: 0.3.9
-      path: pyrinas/ext/nanopb
-      remote: nanopb
   self:
     # This repository should be cloned to ncs/nrf.
     path: pyrinas

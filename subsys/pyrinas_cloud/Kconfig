@@ -52,7 +52,7 @@ config PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC
 
 config PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC
 	string "Application MQTT publish topic"
-	default "%.*s/app/pub"
+	default "%.*s/app/pub/%.*s"
 
 config PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC
 	string "Application MQTT subscribe topic"

@@ -33,9 +33,10 @@ load: build
 reset:
 	newtmgr -c $(DEFAULT_MCUMGR_TARGET) reset
 
-.PHONY: screen
-screen:
-	@screen $(MCUMGR_SERIAL_PORT) $(MCUMGR_SERIAL_BAUD)
+.PHONY: log
+log:
+	#@screen $(MCUMGR_SERIAL_PORT) $(MCUMGR_SERIAL_BAUD)
+	@sudo cu -l $(MCUMGR_SERIAL_PORT) -s $(MCUMGR_SERIAL_BAUD)
 
 .PHONY: debug
 debug:

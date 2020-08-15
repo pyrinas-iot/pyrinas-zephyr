@@ -79,7 +79,7 @@ int pyrinas_cloud_publish();
 int pyrinas_cloud_subscribe();
 
 /* Publish UID specific application event to the cloud */
-int pyrinas_cloud_publish_w_uid();
+int pyrinas_cloud_publish_w_uid(uint8_t *uid, size_t uid_len, uint8_t *data, size_t len);
 
 /* Subscribe and listen for uid specific application events */
 int pyrinas_cloud_subscribe_w_uid();

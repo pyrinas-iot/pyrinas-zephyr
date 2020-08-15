@@ -28,7 +28,7 @@ int encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t *buf, s
     if (cbor_err != 0)
     {
         printk("[%s:%d] cbor encoding error %d\n", __func__,
-            __LINE__, cbor_err);
+               __LINE__, cbor_err);
         return ENOEXEC;
     }
 
@@ -36,10 +36,9 @@ int encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t *buf, s
     *payload_len = (size_t)(writer.ptr - buf);
 
     printk("[%s:%d] cbor encoded %d bytes\n", __func__,
-        __LINE__, *payload_len);
+           __LINE__, *payload_len);
 
     return 0;
-
 }
 
 int decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, size_t data_len)
@@ -57,7 +56,7 @@ int decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, s
     if (cbor_error != CborNoError)
     {
         printk("CBOR parser initialization failed (err: %d)\n",
-            cbor_error);
+               cbor_error);
         return cbor_error;
     }
 
@@ -77,21 +76,21 @@ int decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, s
     cbor_value_advance_fixed(&map_value);
     size_t ver_str_len = sizeof(ota_data->version);
     cbor_value_copy_text_string(&map_value, ota_data->version,
-        &ver_str_len, &map_value); /* this advances the iterator*/
+                                &ver_str_len, &map_value); /* this advances the iterator*/
 
-/* Get the host */
+    /* Get the host */
     cbor_value_advance_fixed(&map_value);
     size_t host_str_len = sizeof(ota_data->host);
     cbor_value_copy_text_string(&map_value, ota_data->host,
-        &host_str_len, &map_value); /* this advances the iterator*/
+                                &host_str_len, &map_value); /* this advances the iterator*/
 
-/* Get the file */
+    /* Get the file */
     cbor_value_advance_fixed(&map_value);
     size_t file_str_len = sizeof(ota_data->file);
     cbor_value_copy_text_string(&map_value, ota_data->file,
-        &file_str_len, &map_value); /* this advances the iterator*/
+                                &file_str_len, &map_value); /* this advances the iterator*/
 
-/* Get the force value */
+    /* Get the force value */
     cbor_value_advance_fixed(&map_value);
     cbor_value_get_boolean(&map_value, &ota_data->force);
 
@@ -141,7 +140,7 @@ int encode_telemetry_data(uint8_t *buf, size_t data_len, size_t *payload_len)
     if (cbor_err != 0)
     {
         printk("[%s:%d] cbor encoding error %d\n", __func__,
-            __LINE__, cbor_err);
+               __LINE__, cbor_err);
         return ENOEXEC;
     }
 
@@ -149,7 +148,7 @@ int encode_telemetry_data(uint8_t *buf, size_t data_len, size_t *payload_len)
     *payload_len = (size_t)(writer.ptr - buf);
 
     printk("[%s:%d] cbor encoded %d bytes\n", __func__,
-        __LINE__, *payload_len);
+           __LINE__, *payload_len);
 
     return 0;
 }

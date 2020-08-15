@@ -33,7 +33,7 @@ K_TIMER_DEFINE(reconnect_timer, reconnect_timer_event, NULL);
 #define RECONNECT_INTERVAL K_SECONDS(30)
 
 /* Security tag for fetching certs */
-static sec_tag_t sec_tag_list[] ={ CONFIG_PYRINAS_CLOUD_SEC_TAG };
+static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
 
 /* Buffers for MQTT client. */
 static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
@@ -49,7 +49,6 @@ char imei[IMEI_LEN];
 char ota_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC) + IMEI_LEN];
 char ota_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC) + IMEI_LEN];
 char telemetry_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC) + IMEI_LEN];
-char application_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC) + IMEI_LEN];
 char application_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + IMEI_LEN];
 // TODO: config topic -- used for adding/removing bluetooth clients
 
@@ -116,11 +115,11 @@ static int get_imei(char *imei_buf, size_t len)
 
     /* Fetch the IMEI using at cmd */
     int err = at_cmd_write("AT+CGSN", buf, CGSN_RESP_LEN,
-        &at_state);
+                           &at_state);
     if (err)
     {
         printk("Error when trying to do at_cmd_write: %d, at_state: %d",
-            err, at_state);
+               err, at_state);
         return err;
     }
 
@@ -155,13 +154,13 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
  */
 static int unsubscribe(char *topic, size_t len)
 {
-    struct mqtt_topic subscribe_topic ={
-        .topic ={ .utf8 = topic,
-        .size = len },
-        .qos = MQTT_QOS_1_AT_LEAST_ONCE };
+    struct mqtt_topic subscribe_topic = {
+        .topic = {.utf8 = topic,
+                  .size = len},
+        .qos = MQTT_QOS_1_AT_LEAST_ONCE};
 
-    const struct mqtt_subscription_list subscription_list ={
-        .list = &subscribe_topic, .list_count = 1, .message_id = 4321 };
+    const struct mqtt_subscription_list subscription_list = {
+        .list = &subscribe_topic, .list_count = 1, .message_id = 4321};
 
     printk("Unsubscribing to: %s len %u\n", topic, len);
 
@@ -172,13 +171,13 @@ static int unsubscribe(char *topic, size_t len)
  */
 static int subscribe(char *topic, size_t len)
 {
-    struct mqtt_topic subscribe_topic ={
-        .topic ={ .utf8 = topic,
-        .size = len },
-        .qos = MQTT_QOS_1_AT_LEAST_ONCE };
+    struct mqtt_topic subscribe_topic = {
+        .topic = {.utf8 = topic,
+                  .size = len},
+        .qos = MQTT_QOS_1_AT_LEAST_ONCE};
 
-    const struct mqtt_subscription_list subscription_list ={
-        .list = &subscribe_topic, .list_count = 1, .message_id = 1234 };
+    const struct mqtt_subscription_list subscription_list = {
+        .list = &subscribe_topic, .list_count = 1, .message_id = 1234};
 
     printk("Subscribing to: %s len %u\n", topic, len);
 
@@ -188,8 +187,8 @@ static int subscribe(char *topic, size_t len)
 /**@brief Function to read the published payload.
  */
 static int publish_get_payload(struct mqtt_client *c,
-    uint8_t *write_buf,
-    size_t length)
+                               uint8_t *write_buf,
+                               size_t length)
 {
     uint8_t *buf = write_buf;
     uint8_t *end = buf + length;
@@ -344,7 +343,8 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
         if (((result == 0 && ota_data.force) || result == 1))
         {
 
-            if (atomic_get(&ota_state_s) == ota_state_ready) {
+            if (atomic_get(&ota_state_s) == ota_state_ready)
+            {
                 printk("Start upgrade\n");
 
                 /* Set OTA State */
@@ -353,15 +353,16 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 /* Start upgrade here*/
                 k_delayed_work_submit(&fota_work, K_SECONDS(5));
             }
-
         }
-        else {
+        else
+        {
 
             /* Cancel ota if the version is not valid */
             k_work_submit(&ota_done_work);
         }
     }
-    else if (strcmp(application_sub_topic, topic) == 0) {
+    else if (strcmp(application_sub_topic, topic) == 0)
+    {
         printk("application sub topic\n");
 
         // TODO: decode application event
@@ -402,7 +403,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
 
     case MQTT_EVT_DISCONNECT:
         printk("[%s:%d] MQTT client disconnected %d\n", __func__,
-            __LINE__, evt->result);
+               __LINE__, evt->result);
 
         /* Stop the timer, we're disconnected*/
         k_timer_stop(&telemetry_timer);
@@ -426,7 +427,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         const struct mqtt_publish_param *p = &evt->param.publish;
 
         printk("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d\n", __func__,
-            __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
+               __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
         err = publish_get_payload(c, payload_buf, p->message.payload.len);
         if (err >= 0)
         {
@@ -450,8 +451,8 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         {
             printk("ack!");
 
-            const struct mqtt_puback_param ack ={
-                .message_id = p->message_id };
+            const struct mqtt_puback_param ack = {
+                .message_id = p->message_id};
 
             /* Send acknowledgment. */
             err = mqtt_publish_qos1_ack(c, &ack);
@@ -472,9 +473,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         }
 
         printk("[%s:%d] PUBACK packet id: %u\n", __func__, __LINE__,
-            evt->param.puback.message_id);
-
-
+               evt->param.puback.message_id);
 
         /* Check if the ack is for OTA done */
         if (ota_done_message_id == evt->param.puback.message_id &&
@@ -499,7 +498,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         }
 
         printk("[%s:%d] SUBACK packet id: %u\n", __func__, __LINE__,
-            evt->param.suback.message_id);
+               evt->param.suback.message_id);
         break;
 
     default:
@@ -516,8 +515,8 @@ static int broker_init(void)
     int err;
     struct addrinfo *result;
     struct addrinfo *addr;
-    struct addrinfo hints ={ .ai_family = AF_INET,
-        .ai_socktype = SOCK_STREAM };
+    struct addrinfo hints = {.ai_family = AF_INET,
+                             .ai_socktype = SOCK_STREAM};
 
     err = getaddrinfo(CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME, NULL, &hints, &result);
     if (err)
@@ -541,12 +540,12 @@ static int broker_init(void)
 
             broker4->sin_addr.s_addr =
                 ((struct sockaddr_in *)addr->ai_addr)
-                ->sin_addr.s_addr;
+                    ->sin_addr.s_addr;
             broker4->sin_family = AF_INET;
             broker4->sin_port = htons(CONFIG_PYRINAS_CLOUD_MQTT_BROKER_PORT);
 
             inet_ntop(AF_INET, &broker4->sin_addr.s_addr, ipv4_addr,
-                sizeof(ipv4_addr));
+                      sizeof(ipv4_addr));
             printk("IPv4 Address found %s\n", ipv4_addr);
 
             break;
@@ -554,9 +553,9 @@ static int broker_init(void)
         else
         {
             printk("ai_addrlen = %u should be %u or %u\n",
-                (unsigned int)addr->ai_addrlen,
-                (unsigned int)sizeof(struct sockaddr_in),
-                (unsigned int)sizeof(struct sockaddr_in6));
+                   (unsigned int)addr->ai_addrlen,
+                   (unsigned int)sizeof(struct sockaddr_in),
+                   (unsigned int)sizeof(struct sockaddr_in6));
         }
 
         addr = addr->ai_next;
@@ -600,7 +599,6 @@ static void ota_done_work_fn(struct k_work *unused)
 {
 
     publish_ota_done();
-
 }
 
 static void work_init()
@@ -810,15 +808,33 @@ void pyrinas_cloud_init()
     snprintf(ota_pub_topic, sizeof(ota_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC, IMEI_LEN, imei);
     snprintf(ota_sub_topic, sizeof(ota_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC, IMEI_LEN, imei);
     snprintf(telemetry_pub_topic, sizeof(telemetry_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC, IMEI_LEN, imei);
-    snprintf(application_pub_topic, sizeof(application_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC, IMEI_LEN, imei);
     snprintf(application_sub_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, IMEI_LEN, imei);
 
     /* MQTT client create */
     client_init(&client);
 }
 
+int pyrinas_cloud_publish_w_uid(uint8_t *uid, size_t uid_len, uint8_t *data, size_t len)
+{
+
+    char topic[256];
+
+    snprintf(topic, sizeof(topic),
+             CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
+             uid_len, uid,
+             5, "state");
+
+    /* Save the message ID to check for an ACK */
+    uint16_t message_id = (uint16_t)sys_rand32_get();
+
+    /* Publish the data */
+    data_publish(topic, strlen(topic), data, len, message_id);
+
+    return 0;
+}
+
 #define THREAD_STACK_SIZE KB(2)
 static K_THREAD_STACK_DEFINE(pyrinas_cloud_thread_stack, THREAD_STACK_SIZE);
 K_THREAD_DEFINE(pyrinas_cloud_thread, K_THREAD_STACK_SIZEOF(pyrinas_cloud_thread_stack),
-    pyrinas_cloud_process, NULL, NULL, NULL,
-    K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+                pyrinas_cloud_process, NULL, NULL, NULL,
+                K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);

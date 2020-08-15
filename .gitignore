@@ -5,3 +5,6 @@ command.pb
 
 # Ignore dependencies imported using west
 ext/nanopb
+
+# Ignore temp
+old
