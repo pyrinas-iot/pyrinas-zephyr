@@ -9,7 +9,6 @@ zephyr_library()
 zephyr_library_sources(
   app/app_weak.c
   ble/ble_m.c
-  proto/command.pb.c
 )
 
 if (CONFIG_PYRINAS_PERIPH_ENABLED)

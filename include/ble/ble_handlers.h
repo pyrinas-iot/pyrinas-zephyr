@@ -7,7 +7,7 @@
 #ifndef BLE_HANDLERS_H
 #define BLE_HANDLERS_H
 
-#include <proto/command.pb.h>
+#include <pyrinas_codec.h>
 
 /**@brief Callback to BLE module. */
 typedef void (*ble_ready_t)(void);
@@ -17,7 +17,7 @@ typedef void (*ble_ready_t)(void);
 typedef void (*susbcribe_handler_t)(char *name, char *data);
 
 /**@brief Raw subscription handler definition. */
-typedef void (*raw_susbcribe_handler_t)(protobuf_event_t *evt);
+typedef void (*raw_susbcribe_handler_t)(pyrinas_event_t *evt);
 
 /**@brief Raw subscription handler definition. */
 typedef void (*encoded_data_handler_t)(const char *data, uint16_t len);

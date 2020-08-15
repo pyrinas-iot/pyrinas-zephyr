@@ -7,14 +7,16 @@
 #ifndef BLE_SETTINGS_H
 #define BLE_SETTINGS_H
 
+#include <pyrinas_codec.h>
+
 // Alignment of data in queue
 #define BLE_QUEUE_ALIGN 4
 
 // Calculate Queue Size
-#if protobuf_event_t_size % BLE_QUEUE_ALIGN == 0
-#define BLE_QUEUE_ITEM_SIZE protobuf_event_t_size
+#if pyrinas_event_t_size % BLE_QUEUE_ALIGN == 0
+#define BLE_QUEUE_ITEM_SIZE pyrinas_event_t_size
 #else
-#define BLE_QUEUE_ITEM_SIZE ((BLE_QUEUE_ALIGN - (protobuf_event_t_size % BLE_QUEUE_ALIGN)) + protobuf_event_t_size)
+#define BLE_QUEUE_ITEM_SIZE ((BLE_QUEUE_ALIGN - (pyrinas_event_t_size % BLE_QUEUE_ALIGN)) + pyrinas_event_t_size)
 #endif
 
 #if BLE_QUEUE_ITEM_SIZE % BLE_QUEUE_ALIGN != 0

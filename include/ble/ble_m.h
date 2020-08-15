@@ -14,8 +14,6 @@
 #ifndef BLE_M_H__
 #define BLE_M_H__
 
-#include <proto/command.pb.h>
-
 #include <ble/ble_central.h>
 #include <ble/ble_settings.h>
 #include <ble/ble_handlers.h>
@@ -25,7 +23,7 @@
 typedef struct
 {
   susbcribe_handler_t evt_handler;
-  protobuf_event_t_name_t name;
+  pyrinas_event_name_data_t name;
 } ble_subscription_handler_t;
 
 typedef struct
@@ -51,7 +49,8 @@ typedef struct
 {
   ble_mode_t mode;
   bool long_range;
-  union {
+  union
+  {
     ble_central_init_t central_config;
   };
 
@@ -79,7 +78,7 @@ void scan_start(void);
 void ble_publish(char *name, char *data);
 
 // TODO: document this
-void ble_publish_raw(protobuf_event_t event);
+void ble_publish_raw(pyrinas_event_t event);
 
 // TODO: document this
 void ble_subscribe(char *name, susbcribe_handler_t handler);
