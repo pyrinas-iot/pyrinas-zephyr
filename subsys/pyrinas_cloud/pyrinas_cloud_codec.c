@@ -105,33 +105,23 @@ int encode_telemetry_data(uint8_t *buf, size_t data_len, size_t *payload_len)
     CborError cbor_err;
     struct cbor_buf_writer writer;
 
-    /* This is dynamic */
-    uint8_t keypair_count = 2;
-
     /* Sends the current signal strength */
     char rsrp = cellular_get_signal_strength();
 
-    /* Decrement keypair count if rsrp (signal strength) is invalid */
-    if (rsrp > RSRP_THRESHOLD)
-    {
-        keypair_count -= 1;
-    }
-
+    /* Create writer and encoder */
     cbor_buf_writer_init(&writer, buf, data_len);
     cbor_encoder_init(&cbor, &writer.enc, 0);
-    cbor_encoder_create_map(&cbor, &cbor_map, keypair_count);
+
+    /* Create map to house data */
+    cbor_encoder_create_map(&cbor, &cbor_map, CborIndefiniteLength);
 
     /* Sends the app version string as provided by Git*/
-    // char type[] = {tel_type_version};
-    // cbor_encode_text_stringz(&cbor_map, "version");
     cbor_encode_uint(&cbor_map, tel_type_version);
     cbor_encode_text_stringz(&cbor_map, STRINGIFY(PYRINAS_APP_VERSION));
 
     /* Only add if valid */
     if (rsrp <= RSRP_THRESHOLD)
     {
-        // type[0] = tel_type_rsrp;
-        // cbor_encode_text_stringz(&cbor_map, "rsrp");
         cbor_encode_uint(&cbor_map, tel_type_rsrp);
         cbor_encode_uint(&cbor_map, rsrp);
     }
