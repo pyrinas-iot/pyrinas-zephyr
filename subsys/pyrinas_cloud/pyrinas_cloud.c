@@ -248,7 +248,7 @@ static void publish_ota_done()
 
 static void publish_telemetry()
 {
-    char buf[16];
+    char buf[64];
     size_t payload_len = 0;
     encode_telemetry_data(buf, sizeof(buf), &payload_len);
     uint16_t message_id = (uint16_t)sys_rand32_get();

@@ -116,8 +116,9 @@ int encode_telemetry_data(uint8_t *buf, size_t data_len, size_t *payload_len)
     cbor_encoder_create_map(&cbor, &cbor_map, CborIndefiniteLength);
 
     /* Sends the app version string as provided by Git*/
+    char *version = STRINGIFY(PYRINAS_APP_VERSION);
     cbor_encode_uint(&cbor_map, tel_type_version);
-    cbor_encode_text_stringz(&cbor_map, STRINGIFY(PYRINAS_APP_VERSION));
+    cbor_encode_text_string(&cbor_map, version, strlen(version));
 
     /* Only add if valid */
     if (rsrp <= RSRP_THRESHOLD)
