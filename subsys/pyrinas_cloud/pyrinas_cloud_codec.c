@@ -1,145 +1,99 @@
 #include <zephyr.h>
 #include <stdio.h>
-#include <tinycbor/cbor.h>
-#include <tinycbor/cbor_buf_writer.h>
-#include <tinycbor/cbor_buf_reader.h>
 #include <pyrinas_cloud/pyrinas_cloud.h>
 #include <cellular/cellular.h>
 
 #include "pyrinas_cloud_codec.h"
 
-int encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t *buf, size_t data_len, size_t *payload_len)
+#include <logging/log.h>
+LOG_MODULE_REGISTER(pyrinas_cloud_codec);
+
+QCBORError encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t *p_buf, size_t data_len, size_t *payload_len)
 {
 
-    CborEncoder cbor, cbor_map;
-    CborError cbor_err;
-    struct cbor_buf_writer writer;
-    const int keypair_count = 1;
+    /* Setup of the goods */
+    UsefulBuf buf = {
+        .ptr = p_buf,
+        .len = data_len};
+    QCBOREncodeContext ec;
+    QCBOREncode_Init(&ec, buf);
 
-    cbor_buf_writer_init(&writer, buf, data_len);
-    cbor_encoder_init(&cbor, &writer.enc, 0);
-    cbor_encoder_create_map(&cbor, &cbor_map, keypair_count);
+    /* Create over-arching map */
+    QCBOREncode_OpenMap(&ec);
+    QCBOREncode_AddUInt64ToMapN(&ec, 0, cmd_type);
+    QCBOREncode_CloseMap(&ec);
 
-    /* The ota command position */
-    cbor_encode_uint(&cbor_map, 0);
-    cbor_encode_uint(&cbor_map, cmd_type);
-
-    cbor_err = cbor_encoder_close_container(&cbor, &cbor_map);
-    if (cbor_err != 0)
-    {
-        printk("[%s:%d] cbor encoding error %d\n", __func__,
-               __LINE__, cbor_err);
-        return ENOEXEC;
-    }
-
-    /* Gets the length of the CBOR data*/
-    *payload_len = (size_t)(writer.ptr - buf);
-
-    printk("[%s:%d] cbor encoded %d bytes\n", __func__,
-           __LINE__, *payload_len);
-
-    return 0;
+    /* Finish and get size */
+    return QCBOREncode_FinishGetSize(&ec, payload_len);
 }
 
 int decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, size_t data_len)
 {
 
-    CborError cbor_error;
-    CborParser parser;
-    CborValue value;
-    struct cbor_buf_reader reader;
+    /* Setup of the goods */
+    UsefulBufC buf = {
+        .ptr = data,
+        .len = data_len};
+    QCBORDecodeContext dc;
+    QCBORItem item;
+    QCBORDecode_Init(&dc, buf, QCBOR_DECODE_MODE_NORMAL);
 
-    /* initalize the reader */
-    cbor_buf_reader_init(&reader, data, data_len);
-    cbor_error = cbor_parser_init(&reader.r, 0, &parser, &value);
-
-    if (cbor_error != CborNoError)
+    QCBORDecode_GetNext(&dc, &item);
+    if (item.uDataType != QCBOR_TYPE_MAP)
     {
-        printk("CBOR parser initialization failed (err: %d)\n",
-               cbor_error);
-        return cbor_error;
-    }
-
-    /* Return if we're not dealing with a map*/
-    if (!cbor_value_is_map(&value))
-    {
-        printk("Unexpected CBOR data structure.\n");
+        LOG_ERR("Expected CBOR map structure.");
         return -ENOEXEC;
     }
 
-    // Since int is a known size we can use the fixed funciton
-    CborValue map_value;
-    // int type;
-    cbor_value_enter_container(&value, &map_value);
-
     /* Get the version */
-    cbor_value_advance_fixed(&map_value);
-    size_t ver_str_len = sizeof(ota_data->version);
-    cbor_value_copy_text_string(&map_value, ota_data->version,
-                                &ver_str_len, &map_value); /* this advances the iterator*/
+    QCBORDecode_GetNext(&dc, &item);
+    if (item.val.string.len > sizeof(ota_data->version))
+        return -ENOEXEC;
+    memcpy(ota_data->version, item.val.string.ptr, item.val.string.len);
 
     /* Get the host */
-    cbor_value_advance_fixed(&map_value);
-    size_t host_str_len = sizeof(ota_data->host);
-    cbor_value_copy_text_string(&map_value, ota_data->host,
-                                &host_str_len, &map_value); /* this advances the iterator*/
+    QCBORDecode_GetNext(&dc, &item);
+    if (item.val.string.len > sizeof(ota_data->host))
+        return -ENOEXEC;
+    memcpy(ota_data->host, item.val.string.ptr, item.val.string.len);
 
     /* Get the file */
-    cbor_value_advance_fixed(&map_value);
-    size_t file_str_len = sizeof(ota_data->file);
-    cbor_value_copy_text_string(&map_value, ota_data->file,
-                                &file_str_len, &map_value); /* this advances the iterator*/
+    QCBORDecode_GetNext(&dc, &item);
+    if (item.val.string.len > sizeof(ota_data->file))
+        return -ENOEXEC;
+    memcpy(ota_data->file, item.val.string.ptr, item.val.string.len);
 
     /* Get the force value */
-    cbor_value_advance_fixed(&map_value);
-    cbor_value_get_boolean(&map_value, &ota_data->force);
+    QCBORDecode_GetNext(&dc, &item);
+    ota_data->force = item.uDataType == QCBOR_TYPE_TRUE;
 
     printk("version:%s, url:%s/%s, force:%d\n", ota_data->version, ota_data->host, ota_data->file, ota_data->force);
 
     return 0;
 }
 
-int encode_telemetry_data(uint8_t *buf, size_t data_len, size_t *payload_len)
+QCBORError encode_telemetry_data(uint8_t *p_buf, size_t data_len, size_t *payload_len)
 {
-    CborEncoder cbor, cbor_map;
-    CborError cbor_err;
-    struct cbor_buf_writer writer;
+    /* Setup of the goods */
+    UsefulBuf buf = {
+        .ptr = p_buf,
+        .len = data_len};
+    QCBOREncodeContext ec;
+    QCBOREncode_Init(&ec, buf);
 
-    /* Sends the current signal strength */
-    char rsrp = cellular_get_signal_strength();
-
-    /* Create writer and encoder */
-    cbor_buf_writer_init(&writer, buf, data_len);
-    cbor_encoder_init(&cbor, &writer.enc, 0);
-
-    /* Create map to house data */
-    cbor_encoder_create_map(&cbor, &cbor_map, CborIndefiniteLength);
-
-    /* Sends the app version string as provided by Git*/
-    char *version = STRINGIFY(PYRINAS_APP_VERSION);
-    cbor_encode_uint(&cbor_map, tel_type_version);
-    cbor_encode_text_string(&cbor_map, version, strlen(version));
+    /* Create over-arching map */
+    QCBOREncode_OpenMap(&ec);
+    QCBOREncode_AddSZStringToMapN(&ec, tel_type_version, STRINGIFY(PYRINAS_APP_VERSION));
 
     /* Only add if valid */
+    char rsrp = cellular_get_signal_strength();
     if (rsrp <= RSRP_THRESHOLD)
     {
-        cbor_encode_uint(&cbor_map, tel_type_rsrp);
-        cbor_encode_uint(&cbor_map, rsrp);
+        QCBOREncode_AddUInt64ToMapN(&ec, tel_type_rsrp, rsrp);
     }
 
-    cbor_err = cbor_encoder_close_container(&cbor, &cbor_map);
-    if (cbor_err != 0)
-    {
-        printk("[%s:%d] cbor encoding error %d\n", __func__,
-               __LINE__, cbor_err);
-        return ENOEXEC;
-    }
+    QCBOREncode_CloseMap(&ec);
 
-    /* Gets the length of the CBOR data*/
-    *payload_len = (size_t)(writer.ptr - buf);
-
-    printk("[%s:%d] cbor encoded %d bytes\n", __func__,
-           __LINE__, *payload_len);
-
-    return 0;
+    /* Finish and get size */
+    return QCBOREncode_FinishGetSize(&ec, payload_len);
 }

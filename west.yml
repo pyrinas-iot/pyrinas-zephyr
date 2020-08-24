@@ -3,11 +3,18 @@ manifest:
   remotes:
     - name: nrfconnect
       url-base: https://github.com/nrfconnect
+    - name: qcbor
+      url-base: https://github.com/laurencelundblade
   projects:
     - name: nrf
       remote: nrfconnect
       revision: 4b012fb4882f0ddd3de9f339ebc5a3f1c3cacd4a
       import: true
+    - name: qcbor
+      repo-path: QCBOR
+      revision: 2db2661d498657729a9aec27d96da14d5345808a
+      path: pyrinas/ext/qcbor
+      remote: qcbor
   self:
     # This repository should be cloned to ncs/nrf.
     path: pyrinas
