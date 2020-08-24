@@ -56,7 +56,7 @@ config PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC
 
 config PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC
 	string "Application MQTT subscribe topic"
-	default "%.*s/app/sub"
+	default "%.*s/app/sub/%.*s"
 
 config PYRINAS_CLOUD_MQTT_CLIENT_ID
 	string "MQTT Client ID"
@@ -77,6 +77,14 @@ config PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE
 config PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE
 	int "MQTT payload buffer size"
 	default 128
+
+config PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT
+	int "Max application callback count."
+	default 10
+
+config PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE
+	int "Max size of the callback name."
+	default 16
 
 endif
 

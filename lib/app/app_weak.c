@@ -6,6 +6,11 @@
 
 #include <zephyr.h>
 
+void __weak early_setup(void)
+{
+  printk("Early app setup!\n");
+}
+
 void __weak setup(void)
 {
   printk("App weak!\n");

@@ -7,6 +7,7 @@
 #ifndef APP_WEAK_H
 #define APP_WEAK_H
 
+void early_setup(void);
 void setup(void);
 void loop(void);
 

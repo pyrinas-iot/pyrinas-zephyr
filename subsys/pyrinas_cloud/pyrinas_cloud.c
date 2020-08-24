@@ -16,6 +16,9 @@
 #include "pyrinas_cloud_codec.h"
 #include "pyrinas_cloud_helper.h"
 
+#include <logging/log.h>
+LOG_MODULE_REGISTER(pyrinas_cloud);
+
 #if !defined(CONFIG_MQTT_LIB_TLS)
 #error CONFIG_MQTT_LIB_TLS must be defined!
 #endif /* defined(CONFIG_MQTT_LIB_TLS) */
@@ -42,14 +45,13 @@ static uint8_t payload_buf[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
 
 /* IMEI storage */
 #define CGSN_RESP_LEN 19
-#define IMEI_LEN 15
 char imei[IMEI_LEN];
 
 /* Topics */
 char ota_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC) + IMEI_LEN];
 char ota_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC) + IMEI_LEN];
 char telemetry_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC) + IMEI_LEN];
-char application_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + IMEI_LEN];
+char application_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + IMEI_LEN + CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE];
 // TODO: config topic -- used for adding/removing bluetooth clients
 
 /* The mqtt client struct */
@@ -74,6 +76,7 @@ static atomic_val_t reconnect = ATOMIC_INIT(0);
 static struct pollfd fds;
 
 /* Structures for work */
+static struct k_work state_update_work;
 static struct k_work publish_telemetry_work;
 static struct k_work ota_reboot_work;
 static struct k_work ota_done_work;
@@ -84,6 +87,12 @@ static struct k_delayed_work fota_work;
 /* Making the ota dat static */
 static struct pyrinas_cloud_ota_data ota_data;
 
+/* Callback for application back to main context*/
+pryinas_cloud_application_cb_entry_t *callbacks[CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT];
+
+/* Cloud state callback */
+static pyrinas_cloud_state_evt_t state_event;
+
 #if defined(CONFIG_BSD_LIBRARY)
 
 /**@brief Recoverable BSD library error. */
@@ -93,6 +102,64 @@ void bsd_recoverable_error_handler(uint32_t err)
 }
 
 #endif /* defined(CONFIG_BSD_LIBRARY) */
+
+int pyrinas_cloud_subscribe(char *topic, pyrinas_cloud_application_cb_t callback)
+{
+    /* Get the string length */
+    size_t topic_len = strlen(topic);
+
+    // Return if name is greater than name size
+    if (topic_len > CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE)
+    {
+        return -EINVAL;
+    }
+
+    for (int i = 0; i < CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT; i++)
+    {
+        if (callbacks[i] == NULL)
+        {
+            /* Allocate memory */
+            callbacks[i] = k_malloc(sizeof(pryinas_cloud_application_cb_entry_t));
+
+            /* Set the full name */
+            snprintf(callbacks[i]->full_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, IMEI_LEN, imei, topic_len, topic);
+
+            LOG_INF("application subscribe to: %s", callbacks[i]->full_topic);
+
+            /* Set the values */
+            callbacks[i]->cb = callback;
+            callbacks[i]->topic_len = topic_len;
+
+            /* Copy the name*/
+            memcpy(callbacks[i]->topic, topic, topic_len);
+
+            return 0;
+        }
+    }
+
+    /* Can't add new entry. They're all occupied! */
+    return -ENOMEM;
+}
+
+int pyrinas_cloud_unsubscribe(char *topic)
+{
+
+    for (int i = 0; i < CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT; i++)
+    {
+        if (callbacks[i] == NULL)
+            continue;
+
+        if (strcmp(callbacks[i]->topic, topic) == 0)
+        {
+            /* Free memory */
+            k_free(callbacks[i]);
+            return 0;
+        }
+    }
+
+    /* Entry not found */
+    return -ENOENT;
+}
 
 static void reconnect_timer_event(struct k_timer *timer)
 {
@@ -133,6 +200,13 @@ static int get_imei(char *imei_buf, size_t len)
  */
 static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t data_len, uint16_t message_id)
 {
+
+    if (atomic_get(&cloud_state_s) != cloud_state_connected)
+    {
+        LOG_WRN("Not connected. Unable to publish!");
+        return -ENETDOWN;
+    }
+
     struct mqtt_publish_param param;
 
     param.message.topic.qos = MQTT_QOS_1_AT_LEAST_ONCE;
@@ -360,14 +434,27 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             /* Cancel ota if the version is not valid */
             k_work_submit(&ota_done_work);
         }
+
+        return;
     }
-    else if (strcmp(application_sub_topic, topic) == 0)
+
+    for (int i = 0; i < CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT; i++)
     {
-        printk("application sub topic\n");
+        /* Continue if null */
+        if (callbacks[i] == NULL)
+            continue;
 
-        // TODO: decode application event
+        /* Determine if this is the topic*/
+        if (strcmp(callbacks[i]->full_topic, topic) == 0)
+        {
+            printk("Found %s\n", callbacks[i]->topic);
 
-        // TODO:: callback to main context
+            /* Callbacks to app context */
+            callbacks[i]->cb(callbacks[i]->topic, callbacks[i]->topic_len, data, data_len);
+
+            /* Found it,lets break */
+            break;
+        }
     }
 }
 
@@ -388,6 +475,9 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         }
 
         printk("[%s:%d] MQTT client connected!\n", __func__, __LINE__);
+
+        /* Update state in main context */
+        k_work_submit(&state_update_work);
 
         /* Stop any reconnect attempts */
         k_timer_stop(&reconnect_timer);
@@ -413,6 +503,9 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         {
             /* Set state */
             atomic_set(&cloud_state_s, cloud_state_disconnected);
+
+            /* Update state in main context */
+            k_work_submit(&state_update_work);
 
             /* Set reconnec state */
             atomic_set(&reconnect, 1);
@@ -601,6 +694,14 @@ static void ota_done_work_fn(struct k_work *unused)
     publish_ota_done();
 }
 
+static void state_update_work_fn(struct k_work *unused)
+{
+
+    /* Send state event*/
+    if (state_event != NULL)
+        state_event(atomic_get(&cloud_state_s));
+}
+
 static void work_init()
 {
     k_delayed_work_init(&fota_work, fota_start_fn);
@@ -609,6 +710,7 @@ static void work_init()
     k_work_init(&ota_done_work, ota_done_work_fn);
     k_work_init(&reconnect_work, reconnect_work_fn);
     k_work_init(&publish_telemetry_work, publish_telemetry_work_fn);
+    k_work_init(&state_update_work, state_update_work_fn);
 }
 
 /**@brief Initialize the MQTT client structure
@@ -782,6 +884,9 @@ int pyrinas_cloud_disconnect()
     /* Force disconnect flag enabled */
     atomic_set(&cloud_state_s, cloud_state_force_disconnected);
 
+    /* Update state in main context */
+    k_work_submit(&state_update_work);
+
     err = mqtt_disconnect(&client);
     if (err)
     {
@@ -808,21 +913,21 @@ void pyrinas_cloud_init()
     snprintf(ota_pub_topic, sizeof(ota_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC, IMEI_LEN, imei);
     snprintf(ota_sub_topic, sizeof(ota_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC, IMEI_LEN, imei);
     snprintf(telemetry_pub_topic, sizeof(telemetry_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC, IMEI_LEN, imei);
-    snprintf(application_sub_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, IMEI_LEN, imei);
+    snprintf(application_sub_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, IMEI_LEN, imei, 1, "+");
 
     /* MQTT client create */
     client_init(&client);
 }
 
-int pyrinas_cloud_publish_w_uid(uint8_t *uid, size_t uid_len, uint8_t *data, size_t len)
+int pyrinas_cloud_publish_w_uid(char *uid, char *type, uint8_t *data, size_t len)
 {
 
     char topic[256];
 
     snprintf(topic, sizeof(topic),
              CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
-             uid_len, uid,
-             5, "state");
+             strlen(uid), uid,
+             strlen(type), type);
 
     /* Save the message ID to check for an ACK */
     uint16_t message_id = (uint16_t)sys_rand32_get();
@@ -831,6 +936,17 @@ int pyrinas_cloud_publish_w_uid(uint8_t *uid, size_t uid_len, uint8_t *data, siz
     data_publish(topic, strlen(topic), data, len, message_id);
 
     return 0;
+}
+
+int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
+{
+
+    return pyrinas_cloud_publish_w_uid(imei, type, data, len);
+}
+
+void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb)
+{
+    state_event = cb;
 }
 
 #define THREAD_STACK_SIZE KB(2)

@@ -193,15 +193,18 @@ void main(void)
 	/* Init flash */
 	flash_init();
 
-// Img management with SMP
+/* Img management with SMP */
 #ifdef CONFIG_MCUMGR_CMD_IMG_MGMT
 	img_mgmt_register_group();
 #endif
 
-// Setting up the RTC on I2C2
+/* Setting up the RTC on I2C2 */
 #ifdef CONFIG_PCF85063A
 	rtc_init();
 #endif
+
+	/* Early setup before cloud functions */
+	early_setup();
 
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 	/* Configure modem */
