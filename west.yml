@@ -5,6 +5,8 @@ manifest:
       url-base: https://github.com/nrfconnect
     - name: qcbor
       url-base: https://github.com/laurencelundblade
+    - name: pyrinas-codec
+      url-base: https://github.com/pyrinas-iot
   projects:
     - name: nrf
       repo-path: sdk-nrf
@@ -16,6 +18,10 @@ manifest:
       revision: 2db2661d498657729a9aec27d96da14d5345808a
       path: pyrinas/ext/qcbor
       remote: qcbor
+    - name: pyrinas-codec
+      revision: master
+      path: pyrinas/ext/pyrinas-codec
+      remote: pyrinas-codec
   self:
     # This repository should be cloned to ncs/nrf.
     path: pyrinas

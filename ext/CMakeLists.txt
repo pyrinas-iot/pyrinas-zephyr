@@ -14,3 +14,5 @@ zephyr_library_sources(qcbor/src/qcbor_decode.c)
 zephyr_library_sources(qcbor/src/qcbor_encode.c)
 zephyr_library_sources(qcbor/src/qcbor_err_to_str.c)
 zephyr_library_sources(qcbor/src/UsefulBuf.c)
+
+add_subdirectory(pyrinas-codec)

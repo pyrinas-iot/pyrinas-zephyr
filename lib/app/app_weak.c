@@ -5,15 +5,17 @@
  */
 
 #include <zephyr.h>
+#include <logging/log.h>
+LOG_MODULE_REGISTER(app_weak);
 
 void __weak early_setup(void)
 {
-  printk("Early app setup!\n");
+  LOG_INF("early_setup");
 }
 
 void __weak setup(void)
 {
-  printk("App weak!\n");
+  LOG_INF("setup");
 }
 
 void __weak loop(void)

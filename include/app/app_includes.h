@@ -12,6 +12,9 @@
 
 #include <ble/ble_m.h>
 #include <cellular/cellular.h>
+
+#if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 #include <pyrinas_cloud/pyrinas_cloud.h>
+#endif
 
 #endif

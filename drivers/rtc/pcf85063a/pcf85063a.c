@@ -71,7 +71,7 @@ static int pcf85063a_stop(struct device *dev)
 	return 0;
 }
 
-static int pcf85063a_get_value(struct device *dev, u32_t *ticks)
+static int pcf85063a_get_value(struct device *dev, uint32_t *ticks)
 {
 	return 0;
 }
@@ -172,7 +172,7 @@ static int pcf85063a_set_top_value(struct device *dev, const struct counter_top_
 	return 0;
 }
 
-static u32_t pcf85063a_get_pending_int(struct device *dev)
+static uint32_t pcf85063a_get_pending_int(struct device *dev)
 {
 
 	// Get the data pointer
@@ -194,12 +194,12 @@ static u32_t pcf85063a_get_pending_int(struct device *dev)
 	return (reg & PCF85063A_CTRL2_TF) ? 1U : 0U;
 }
 
-static u32_t pcf85063a_get_top_value(struct device *dev)
+static uint32_t pcf85063a_get_top_value(struct device *dev)
 {
 	return 0;
 }
 
-static u32_t pcf85063a_get_max_relative_alarm(struct device *dev)
+static uint32_t pcf85063a_get_max_relative_alarm(struct device *dev)
 {
 	return 0;
 }
