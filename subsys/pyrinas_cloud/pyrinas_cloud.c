@@ -445,7 +445,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             continue;
 
         /* Determine if this is the topic*/
-        if (strcmp(callbacks[i]->full_topic, topic) == 0)
+        if (strncmp(callbacks[i]->full_topic, topic, topic_len) == 0)
         {
             printk("Found %s\n", callbacks[i]->topic);
 
