@@ -72,7 +72,7 @@ int decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, s
     return 0;
 }
 
-QCBORError encode_telemetry_data(uint8_t *p_buf, size_t data_len, size_t *payload_len)
+QCBORError encode_telemetry_data(struct pyrinas_cloud_telemetry_data *p_data, uint8_t *p_buf, size_t data_len, size_t *payload_len)
 {
     /* Setup of the goods */
     UsefulBuf buf = {
@@ -83,13 +83,12 @@ QCBORError encode_telemetry_data(uint8_t *p_buf, size_t data_len, size_t *payloa
 
     /* Create over-arching map */
     QCBOREncode_OpenMap(&ec);
-    QCBOREncode_AddSZStringToMapN(&ec, tel_type_version, STRINGIFY(PYRINAS_APP_VERSION));
+    QCBOREncode_AddSZStringToMapN(&ec, tel_type_version, p_data->version);
 
-    /* Only add if valid */
-    char rsrp = cellular_get_signal_strength();
-    if (rsrp <= RSRP_THRESHOLD)
+    /* Add RSRP if valid*/
+    if (p_data->rsrp <= RSRP_THRESHOLD)
     {
-        QCBOREncode_AddUInt64ToMapN(&ec, tel_type_rsrp, rsrp);
+        QCBOREncode_AddUInt64ToMapN(&ec, tel_type_rsrp, p_data->rsrp);
     }
 
     QCBOREncode_CloseMap(&ec);
