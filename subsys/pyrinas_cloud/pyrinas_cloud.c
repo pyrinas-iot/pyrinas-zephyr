@@ -322,9 +322,23 @@ static void publish_ota_done()
 
 static void publish_telemetry()
 {
+
     char buf[64];
     size_t payload_len = 0;
-    encode_telemetry_data(buf, sizeof(buf), &payload_len);
+
+    // Intialize data
+    struct pyrinas_cloud_telemetry_data data = {
+        .has_rsrp = true,
+        .rsrp = cellular_get_signal_strength(),
+    };
+
+    // Copy over version string
+    strncpy(data.version, version_string, sizeof(data.version));
+
+    // Encode data
+    encode_telemetry_data(&data, buf, sizeof(buf), &payload_len);
+
+    // Publish telemetry
     uint16_t message_id = (uint16_t)sys_rand32_get();
     data_publish(telemetry_pub_topic, strlen(telemetry_pub_topic), buf, payload_len, message_id);
 }

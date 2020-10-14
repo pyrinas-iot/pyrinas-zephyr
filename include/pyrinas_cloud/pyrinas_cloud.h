@@ -47,6 +47,13 @@ enum pryinas_cloud_state
   cloud_state_force_disconnected,
 };
 
+struct pyrinas_cloud_telemetry_data
+{
+  char version[24];
+  bool has_rsrp;
+  char rsrp;
+};
+
 struct pyrinas_cloud_ota_data
 {
   char version[10];
