@@ -124,7 +124,7 @@ int pyrinas_cloud_subscribe(char *topic, pyrinas_cloud_application_cb_t callback
             /* Set the full name */
             snprintf(callbacks[i]->full_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, IMEI_LEN, imei, topic_len, topic);
 
-            LOG_INF("application subscribe to: %s", callbacks[i]->full_topic);
+            LOG_DBG("application subscribe to: %s", callbacks[i]->full_topic);
 
             /* Set the values */
             callbacks[i]->cb = callback;
@@ -219,7 +219,7 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     param.retain_flag = 0;
 
     // data_print("Publishing: ", data, data_len);
-    printk("Publishing %d bytes to topic: %s len: %u\n", data_len, topic, topic_len);
+    LOG_INF("Publishing %d bytes to topic: %s len: %u", data_len, topic, topic_len);
 
     return mqtt_publish(&client, &param);
 }
@@ -253,7 +253,7 @@ static int subscribe(char *topic, size_t len)
     const struct mqtt_subscription_list subscription_list = {
         .list = &subscribe_topic, .list_count = 1, .message_id = 1234};
 
-    printk("Subscribing to: %s len %u\n", topic, len);
+    LOG_INF("Subscribing to: %s len %u", topic, len);
 
     return mqtt_subscribe(&client, &subscription_list);
 }
@@ -361,7 +361,7 @@ static void telemetry_check_event(struct k_timer *timer)
 
 static void on_connect_fn(struct k_work *unused)
 {
-    printk("[%s:%d] on connect work function!\n", __func__, __LINE__);
+    LOG_DBG("[%s:%d] on connect work function!\n", __func__, __LINE__);
 
     /* Publish telemetry */
     publish_telemetry();
@@ -375,12 +375,15 @@ static void on_connect_fn(struct k_work *unused)
         /* Subscribe to Application topic */
         subscribe(application_sub_topic, strlen(application_sub_topic));
 
+        /* Check OTA */
         publish_ota_check();
     }
     else if (atomic_get(&ota_state_s) == ota_state_done)
     {
+        /* Unsubscribe */
         unsubscribe(ota_sub_topic, strlen(ota_sub_topic));
 
+        /* Notify */
         publish_ota_done();
     }
 }
@@ -487,11 +490,11 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
     {
         if (evt->result != 0)
         {
-            printk("MQTT connect failed %d\n", evt->result);
+            LOG_ERR("MQTT connect failed %d", evt->result);
             break;
         }
 
-        printk("[%s:%d] MQTT client connected!\n", __func__, __LINE__);
+        LOG_INF("MQTT client connected!");
 
         /* Update state in main context */
         k_work_submit(&state_update_work);
@@ -656,7 +659,7 @@ static int broker_init(void)
 
             inet_ntop(AF_INET, &broker4->sin_addr.s_addr, ipv4_addr,
                       sizeof(ipv4_addr));
-            printk("IPv4 Address found %s\n", ipv4_addr);
+            LOG_DBG("IPv4 Address found %s", ipv4_addr);
 
             break;
         }
@@ -809,13 +812,11 @@ int pyrinas_cloud_connect()
 
     int err;
 
-    printk("pyrinas_cloud_connect\n");
-
     /* Connect to MQTT */
     err = mqtt_connect(&client);
     if (err != 0)
     {
-        printk("ERROR: mqtt_connect %d\n", err);
+        LOG_ERR("mqtt_connect %d", err);
         return err;
     }
 
@@ -840,8 +841,6 @@ void pyrinas_cloud_process()
     {
         /* Don't go any further until MQTT is connected */
         k_sem_take(&pyrinas_cloud_thread_sem, K_FOREVER);
-
-        printk("starting cloud thread.\n");
 
         while (atomic_get(&cloud_state_s) == cloud_state_connected)
         {
@@ -923,7 +922,7 @@ void pyrinas_cloud_init()
     get_imei(imei, sizeof(imei));
 
     /* Print the IMEI */
-    printk("imei: %s\n", imei);
+    LOG_INF("IMEI: %s", imei);
 
 /* Init FOTA client */
 #ifdef CONFIG_FOTA_DOWNLOAD
