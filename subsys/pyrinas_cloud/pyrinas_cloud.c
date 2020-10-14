@@ -389,6 +389,8 @@ static void fota_start_fn(struct k_work *unused)
 {
     ARG_UNUSED(unused);
 
+#ifdef CONFIG_FOTA_DOWNLOAD
+
     /* Start the FOTA process */
     int err;
 
@@ -405,6 +407,7 @@ static void fota_start_fn(struct k_work *unused)
 
     /* Set that we're busy now */
     atomic_set(&ota_state_s, ota_state_downloading);
+#endif
 }
 
 static void publish_evt_handler(const char *topic, size_t topic_len, const char *data, size_t data_len)
@@ -769,6 +772,7 @@ static void client_init(struct mqtt_client *client)
     tls_config->hostname = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME;
 }
 
+#ifdef CONFIG_FOTA_DOWNLOAD
 static void fota_evt(const struct fota_download_evt *evt)
 {
 
@@ -798,6 +802,7 @@ static void fota_evt(const struct fota_download_evt *evt)
         break;
     }
 }
+#endif
 
 int pyrinas_cloud_connect()
 {
@@ -920,8 +925,10 @@ void pyrinas_cloud_init()
     /* Print the IMEI */
     printk("imei: %s\n", imei);
 
-    /* Init FOTA client */
+/* Init FOTA client */
+#ifdef CONFIG_FOTA_DOWNLOAD
     fota_download_init(fota_evt);
+#endif
 
     /* Set up topics */
     snprintf(ota_pub_topic, sizeof(ota_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC, IMEI_LEN, imei);
