@@ -91,7 +91,9 @@ static struct pyrinas_cloud_ota_data ota_data;
 pryinas_cloud_application_cb_entry_t *callbacks[CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT];
 
 /* Cloud state callback */
-static pyrinas_cloud_state_evt_t state_event;
+
+/* Version string */
+static const char *version_string = STRINGIFY(PYRINAS_APP_VERSION);
 
 #if defined(CONFIG_BSD_LIBRARY)
 
