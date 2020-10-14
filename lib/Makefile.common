@@ -33,10 +33,14 @@ load: build
 reset:
 	newtmgr -c $(DEFAULT_MCUMGR_TARGET) reset
 
-.PHONY: log
-log:
+.PHONY: logging
+logging:
+	script -a -t0 pyrinas.log
+
+.PHONY: console
+console:
+	sudo cu -l $(MCUMGR_SERIAL_PORT) -s $(MCUMGR_SERIAL_BAUD)
 	#@screen $(MCUMGR_SERIAL_PORT) $(MCUMGR_SERIAL_BAUD)
-	@sudo cu -l $(MCUMGR_SERIAL_PORT) -s $(MCUMGR_SERIAL_BAUD)
 
 .PHONY: debug
 debug:
