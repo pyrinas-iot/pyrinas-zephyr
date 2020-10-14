@@ -21,28 +21,28 @@ void cellular_evt(const struct lte_lc_evt *const evt)
     {
 
     case LTE_LC_NW_REG_NOT_REGISTERED:
-      LOG_INF("not reg");
+      LOG_DBG("not reg");
       break;
     case LTE_LC_NW_REG_REGISTERED_HOME:
-      LOG_INF("reg home");
+      LOG_DBG("reg home");
       break;
     case LTE_LC_NW_REG_SEARCHING:
-      LOG_INF("searching");
+      LOG_DBG("searching");
       break;
     case LTE_LC_NW_REG_REGISTRATION_DENIED:
-      LOG_INF("reg denied");
+      LOG_DBG("reg denied");
       break;
     case LTE_LC_NW_REG_UNKNOWN:
-      LOG_INF("reg unknown");
+      LOG_DBG("reg unknown");
       break;
     case LTE_LC_NW_REG_REGISTERED_ROAMING:
-      LOG_INF("reg roam");
+      LOG_DBG("reg roam");
       break;
     case LTE_LC_NW_REG_REGISTERED_EMERGENCY:
-      LOG_INF("reg em");
+      LOG_DBG("reg em");
       break;
     case LTE_LC_NW_REG_UICC_FAIL:
-      LOG_INF("uicc fail");
+      LOG_DBG("uicc fail");
       break;
     default:
       break;
