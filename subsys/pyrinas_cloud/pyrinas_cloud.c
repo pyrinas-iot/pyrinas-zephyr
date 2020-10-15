@@ -819,6 +819,9 @@ int pyrinas_cloud_connect()
     err = mqtt_connect(&client);
     if (err != 0)
     {
+        // Schedule reconnect work
+        k_timer_start(&reconnect_timer, RECONNECT_INTERVAL, K_NO_WAIT);
+
         LOG_ERR("mqtt_connect %d", err);
         return err;
     }
