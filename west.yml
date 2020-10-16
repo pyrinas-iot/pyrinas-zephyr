@@ -11,7 +11,7 @@ manifest:
     - name: nrf
       repo-path: sdk-nrf
       remote: nrfconnect
-      revision: 4b012fb4882f0ddd3de9f339ebc5a3f1c3cacd4a
+      revision: v1.3.2
       import: true
     - name: qcbor
       repo-path: QCBOR
