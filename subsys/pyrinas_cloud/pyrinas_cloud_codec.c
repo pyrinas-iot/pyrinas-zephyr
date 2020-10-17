@@ -41,7 +41,7 @@ int decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, s
     QCBORDecode_GetNext(&dc, &item);
     if (item.uDataType != QCBOR_TYPE_MAP)
     {
-        LOG_ERR("Expected CBOR map structure.");
+        LOG_WRN("Expected CBOR map structure.");
         return -ENOEXEC;
     }
 

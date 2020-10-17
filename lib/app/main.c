@@ -146,7 +146,7 @@ static bool timer_flag = false;
 void pyrinas_cloud_evt_handler(struct pyrinas_cloud_evt evt)
 {
 
-	LOG_INF("pyrinas_cloud_evt_handler: %d %d", evt.cloud_state, evt.ota_state);
+	LOG_DBG("pyrinas_cloud_evt_handler: %d %d", evt.cloud_state, evt.ota_state);
 
 	if (evt.ota_state == ota_state_ready)
 	{
