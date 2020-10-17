@@ -143,6 +143,22 @@ static void rtc_init()
 static bool timer_flag = false;
 #endif
 
+void pyrinas_cloud_evt_handler(struct pyrinas_cloud_evt evt)
+{
+
+	LOG_INF("pyrinas_cloud_evt_handler: %d %d", evt.cloud_state, evt.ota_state);
+
+	if (evt.ota_state == ota_state_ready)
+	{
+		/* Start main thread */
+		k_sem_give(&main_thread_proceed);
+	}
+	else
+	{
+		LOG_INF("FOTA in progress.");
+	}
+}
+
 void main(void)
 {
 
@@ -203,9 +219,6 @@ void main(void)
 	rtc_init();
 #endif
 
-	/* Early setup before cloud functions */
-	early_setup();
-
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 	/* Configure modem */
 	cellular_configure();
@@ -214,22 +227,21 @@ void main(void)
 	cellular_info_init();
 
 	/* Init Pyrinas Cloud */
-	pyrinas_cloud_init();
+	pyrinas_cloud_init(pyrinas_cloud_evt_handler);
 
 	/* Connect */
 	pyrinas_cloud_connect();
 #endif
-
-	/* User Setup function */
-	setup();
-
-	/* Start main thread */
-	k_sem_give(&main_thread_proceed);
 }
 
 void main_thread_fn()
 {
+
+	/* Wait for ready */
 	k_sem_take(&main_thread_proceed, K_FOREVER);
+
+	/* User Setup function */
+	setup();
 
 	while (true)
 	{

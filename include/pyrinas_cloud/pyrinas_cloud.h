@@ -47,6 +47,12 @@ enum pryinas_cloud_state
   cloud_state_force_disconnected,
 };
 
+struct pyrinas_cloud_evt
+{
+  enum pryinas_cloud_state cloud_state;
+  enum pyrinas_cloud_ota_state ota_state;
+};
+
 struct pyrinas_cloud_telemetry_data
 {
   char version[24];
@@ -56,14 +62,14 @@ struct pyrinas_cloud_telemetry_data
 
 struct pyrinas_cloud_ota_data
 {
-  char version[10];
+  char version[18];
   char host[128];
   char file[128];
   bool force;
 };
 
 /* Callbacks */
-typedef void (*pyrinas_cloud_state_evt_t)(enum pryinas_cloud_state evt);
+typedef void (*pyrinas_cloud_state_evt_t)(struct pyrinas_cloud_evt evt);
 typedef void (*pyrinas_cloud_application_cb_t)(const uint8_t *topic, size_t topic_len, const uint8_t *data, size_t data_len);
 
 typedef struct

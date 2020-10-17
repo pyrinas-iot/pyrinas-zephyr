@@ -35,6 +35,9 @@ K_TIMER_DEFINE(reconnect_timer, reconnect_timer_event, NULL);
 /* Reconnect interval */
 #define RECONNECT_INTERVAL K_SECONDS(30)
 
+/* Ping interval */
+#define POLL_INTERVAL_MS 1000
+
 /* Security tag for fetching certs */
 static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
 
@@ -62,14 +65,11 @@ static struct sockaddr_storage broker;
 
 /* Thread control */
 static K_SEM_DEFINE(pyrinas_cloud_thread_sem, 0, 1);
-// static atomic_t connection_poll_active;
-
-/* Message ID tracking for OTA done */
-static uint16_t ota_done_message_id = 0;
 
 /* Atomic flags */
 static atomic_val_t cloud_state_s = ATOMIC_INIT(cloud_state_disconnected);
 static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
+static atomic_val_t startup_complete_s = ATOMIC_INIT(0);
 static atomic_val_t reconnect = ATOMIC_INIT(0);
 
 /* File descriptor */
@@ -90,8 +90,13 @@ static struct pyrinas_cloud_ota_data ota_data;
 /* Callback for application back to main context*/
 pryinas_cloud_application_cb_entry_t *callbacks[CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT];
 
-/* Cloud state callback */
+/* Cloud state callbacks */
+static pyrinas_cloud_state_evt_t evt_callback = NULL;
 static pyrinas_cloud_state_evt_t state_event = NULL;
+
+/* Statically track message id*/
+static uint16_t message_id = 0;
+static uint16_t ota_sub_message_id = 0;
 
 /* Version string */
 static const char *version_string = STRINGIFY(PYRINAS_APP_VERSION);
@@ -166,7 +171,7 @@ int pyrinas_cloud_unsubscribe(char *topic)
 
 static void reconnect_timer_event(struct k_timer *timer)
 {
-    printk("Reconnect!\n");
+    LOG_DBG("Reconnect!\n");
 
     /* Start reconnect work */
     k_work_submit(&reconnect_work);
@@ -246,7 +251,7 @@ static int unsubscribe(char *topic, size_t len)
 
 /**@brief Function to subscribe to the configured topic
  */
-static int subscribe(char *topic, size_t len)
+static int subscribe(char *topic, size_t len, uint16_t message_id)
 {
     struct mqtt_topic subscribe_topic = {
         .topic = {.utf8 = topic,
@@ -254,7 +259,7 @@ static int subscribe(char *topic, size_t len)
         .qos = MQTT_QOS_1_AT_LEAST_ONCE};
 
     const struct mqtt_subscription_list subscription_list = {
-        .list = &subscribe_topic, .list_count = 1, .message_id = 1234};
+        .list = &subscribe_topic, .list_count = 1, .message_id = message_id};
 
     LOG_INF("Subscribing to: %s len %u", topic, len);
 
@@ -300,11 +305,8 @@ static void publish_ota_check()
     /* Encode the request */
     encode_ota_request(ota_cmd_type_check, buf, sizeof(buf), &size);
 
-    /* Save the message ID to check for an ACK */
-    uint16_t message_id = (uint16_t)sys_rand32_get();
-
     /* Publish the data */
-    data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, message_id);
+    data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, message_id++);
 }
 
 static void publish_ota_done()
@@ -316,11 +318,8 @@ static void publish_ota_done()
     /* Encode the request */
     encode_ota_request(ota_cmd_type_done, buf, sizeof(buf), &size);
 
-    /* Save the message ID to check for an ACK */
-    ota_done_message_id = (uint16_t)sys_rand32_get();
-
     /* Publish the data */
-    data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, ota_done_message_id);
+    data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, message_id++);
 }
 
 static void publish_telemetry()
@@ -342,8 +341,7 @@ static void publish_telemetry()
     encode_telemetry_data(&data, buf, sizeof(buf), &payload_len);
 
     // Publish telemetry
-    uint16_t message_id = (uint16_t)sys_rand32_get();
-    data_publish(telemetry_pub_topic, strlen(telemetry_pub_topic), buf, payload_len, message_id);
+    data_publish(telemetry_pub_topic, strlen(telemetry_pub_topic), buf, payload_len, message_id++);
 }
 
 static void publish_telemetry_work_fn(struct k_work *unused)
@@ -364,7 +362,7 @@ static void telemetry_check_event(struct k_timer *timer)
 
 static void on_connect_fn(struct k_work *unused)
 {
-    LOG_DBG("[%s:%d] on connect work function!\n", __func__, __LINE__);
+    LOG_DBG("[%s:%d] on connect work function!", __func__, __LINE__);
 
     /* Publish telemetry */
     publish_telemetry();
@@ -372,22 +370,12 @@ static void on_connect_fn(struct k_work *unused)
     /* Trigger OTA check */
     if (atomic_get(&ota_state_s) == ota_state_ready)
     {
+
+        /* Save this for later */
+        ota_sub_message_id = message_id;
+
         /* Subscribe to OTA topic */
-        subscribe(ota_sub_topic, strlen(ota_sub_topic));
-
-        /* Subscribe to Application topic */
-        subscribe(application_sub_topic, strlen(application_sub_topic));
-
-        /* Check OTA */
-        publish_ota_check();
-    }
-    else if (atomic_get(&ota_state_s) == ota_state_done)
-    {
-        /* Unsubscribe */
-        unsubscribe(ota_sub_topic, strlen(ota_sub_topic));
-
-        /* Notify */
-        publish_ota_done();
+        subscribe(ota_sub_topic, strlen(ota_sub_topic), message_id++);
     }
 }
 
@@ -424,23 +412,44 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
     if (strcmp(ota_sub_topic, topic) == 0)
     {
         /* Parse OTA event */
+        int err = decode_ota_data(&ota_data, data, data_len);
 
-        decode_ota_data(&ota_data, data, data_len);
-        union pyrinas_cloud_version current, incoming;
+        /* If error then no update available */
+        int result = 0;
+        if (err == 0)
+        {
+            /* First string compare */
+            result = strncmp(STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, sizeof(ota_data.version));
 
-        /* Compare incoming version with current version */
-        ver_from_str(&current, STRINGIFY(PYRINAS_APP_VERSION));
-        ver_from_str(&incoming, ota_data.version);
+            if (result != 0)
+            {
+                union pyrinas_cloud_version current, incoming;
 
-        int result = ver_comp(&current, &incoming);
+                /* Compare incoming version with current version */
+                ver_from_str(&current, STRINGIFY(PYRINAS_APP_VERSION));
+                ver_from_str(&incoming, ota_data.version);
 
-        printk("Version check %s vs %s = %d\n", STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, result);
+                /*Check numeric*/
+                result = ver_comp(&current, &incoming);
+
+                LOG_INF("Version check %s vs %s = %d", STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, result);
+            }
+            else
+            {
+                LOG_INF("Ver strings equal!");
+            }
+        }
+        else
+        {
+            LOG_WRN("No valid ota data");
+        }
 
         /*If equal and force or if incoming is greater*/
         if (((result == 0 && ota_data.force) || result == 1))
         {
 
-            if (atomic_get(&ota_state_s) == ota_state_ready)
+            // Check startup flag. If not set do this
+            if (atomic_get(&ota_state_s) == ota_state_ready && atomic_get(&startup_complete_s) == 0)
             {
                 printk("Start upgrade\n");
 
@@ -449,13 +458,42 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
 
                 /* Start upgrade here*/
                 k_delayed_work_submit(&fota_work, K_SECONDS(5));
+
+                /* Force disconnect */
+                pyrinas_cloud_disconnect();
+            }
+            else
+            {
+                //If startup flag is is set, reboot.
+                sys_reboot(SYS_REBOOT_WARM);
             }
         }
         else
         {
 
-            /* Cancel ota if the version is not valid */
-            k_work_submit(&ota_done_work);
+            /* If there wasn't an issue with OTA, continue on our merry way*/
+            if (atomic_get(&ota_state_s) == ota_state_ready)
+            {
+                /*Set the startup complete.*/
+                atomic_set(&startup_complete_s, 1);
+
+                /* Let the backend know we're done */
+                k_work_submit(&ota_done_work);
+
+                /* Subscribe to Application topic */
+                subscribe(application_sub_topic, strlen(application_sub_topic), message_id++);
+
+                // /* Callback to main to notify complete */
+                if (evt_callback)
+                {
+                    struct pyrinas_cloud_evt evt = {
+                        .cloud_state = atomic_get(&cloud_state_s),
+                        .ota_state = atomic_get(&ota_state_s)};
+
+                    // Send the callback yo
+                    evt_callback(evt);
+                }
+            }
         }
 
         return;
@@ -470,7 +508,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
         /* Determine if this is the topic*/
         if (strncmp(callbacks[i]->full_topic, topic, topic_len) == 0)
         {
-            printk("Found %s\n", callbacks[i]->topic);
+            LOG_DBG("Found %s\n", callbacks[i]->topic);
 
             /* Callbacks to app context */
             callbacks[i]->cb(callbacks[i]->topic, callbacks[i]->topic_len, data, data_len);
@@ -542,8 +580,8 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
     {
         const struct mqtt_publish_param *p = &evt->param.publish;
 
-        printk("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d\n", __func__,
-               __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
+        LOG_DBG("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d", __func__,
+                __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
         err = publish_get_payload(c, payload_buf, p->message.payload.len);
         if (err >= 0)
         {
@@ -565,7 +603,6 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         // Need to ACK recieved data...
         if (p->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE)
         {
-            printk("ack!");
 
             const struct mqtt_puback_param ack = {
                 .message_id = p->message_id};
@@ -583,26 +620,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
 
     case MQTT_EVT_PUBACK:
         if (evt->result != 0)
-        {
             printk("MQTT PUBACK error %d\n", evt->result);
-            break;
-        }
-
-        printk("[%s:%d] PUBACK packet id: %u\n", __func__, __LINE__,
-               evt->param.puback.message_id);
-
-        /* Check if the ack is for OTA done */
-        if (ota_done_message_id == evt->param.puback.message_id &&
-            atomic_get(&ota_state_s) == ota_state_done)
-        {
-            printk("[%s:%d] time to rebooot\n", __func__, __LINE__);
-
-            /* Set the state */
-            atomic_set(&ota_state_s, ota_state_reboot);
-
-            /* Reboot work start */
-            k_work_submit(&ota_reboot_work);
-        }
 
         break;
 
@@ -613,8 +631,15 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             break;
         }
 
-        printk("[%s:%d] SUBACK packet id: %u\n", __func__, __LINE__,
-               evt->param.suback.message_id);
+        LOG_DBG("[%s:%d] SUBACK packet id: %u", __func__, __LINE__,
+                evt->param.suback.message_id);
+
+        /* If we're subscribed, publish the request */
+        if (ota_sub_message_id == evt->param.suback.message_id)
+        {
+            publish_ota_check();
+        }
+
         break;
 
     default:
@@ -687,10 +712,7 @@ static int broker_init(void)
 static void reboot_work_fn(struct k_work *unused)
 {
 
-    printk("Reboot work fn\n");
-
-    /* Disconnect */
-    pyrinas_cloud_disconnect();
+    LOG_DBG("Reboot work fn\n");
 
     /* Rebooooot */
     sys_reboot(0);
@@ -707,13 +729,13 @@ static void reconnect_work_fn(struct k_work *unused)
     err = pyrinas_cloud_connect();
     if (err)
     {
-        printk("Unable to reconnect. Err %d", err);
+        LOG_ERR("Unable to reconnect. Err %d", err);
     }
 }
 
 static void ota_done_work_fn(struct k_work *unused)
 {
-
+    /* Publish OTA done */
     publish_ota_done();
 }
 
@@ -722,7 +744,13 @@ static void state_update_work_fn(struct k_work *unused)
 
     /* Send state event*/
     if (state_event != NULL)
-        state_event(atomic_get(&cloud_state_s));
+    {
+        struct pyrinas_cloud_evt evt = {
+            .cloud_state = atomic_get(&cloud_state_s),
+            .ota_state = atomic_get(&ota_state_s)};
+
+        state_event(evt);
+    }
 }
 
 static void work_init()
@@ -800,8 +828,8 @@ static void fota_evt(const struct fota_download_evt *evt)
         /* Set the state */
         atomic_set(&ota_state_s, ota_state_done);
 
-        /* Send done message to the cloud */
-        publish_ota_done();
+        /* Reboot work start */
+        k_work_submit(&ota_reboot_work);
         break;
 
     default:
@@ -817,10 +845,17 @@ int pyrinas_cloud_connect()
 
     /* Connect to MQTT */
     err = mqtt_connect(&client);
-    if (err != 0)
+    if (client.internal.state == 0x4)
     {
-        // Schedule reconnect work
-        k_timer_start(&reconnect_timer, RECONNECT_INTERVAL, K_NO_WAIT);
+        LOG_WRN("Already connected!");
+
+        /* Stop reconnect work */
+        k_timer_stop(&reconnect_timer);
+    }
+    else if (err != 0)
+    {
+        /* Schedule reconnect work */
+        k_timer_start(&reconnect_timer, RECONNECT_INTERVAL, K_SECONDS(30));
 
         LOG_ERR("mqtt_connect %d", err);
         return err;
@@ -833,7 +868,8 @@ int pyrinas_cloud_connect()
     /* Set state */
     atomic_set(&cloud_state_s, cloud_state_connected);
 
-    /* Start the thread */
+    /* Start the thread (if not already)*/
+    k_sem_reset(&pyrinas_cloud_thread_sem);
     k_sem_give(&pyrinas_cloud_thread_sem);
 
     return 0;
@@ -851,7 +887,7 @@ void pyrinas_cloud_process()
         while (atomic_get(&cloud_state_s) == cloud_state_connected)
         {
             /* Then process MQTT */
-            err = poll(&fds, 1, mqtt_keepalive_time_left(&client));
+            err = poll(&fds, 1, POLL_INTERVAL_MS);
             if (err < 0)
             {
                 printk("ERROR: poll %d\n", errno);
@@ -921,8 +957,10 @@ int pyrinas_cloud_disconnect()
     return 0;
 }
 
-void pyrinas_cloud_init()
+void pyrinas_cloud_init(pyrinas_cloud_state_evt_t cb)
 {
+    /*Set the callback*/
+    evt_callback = cb;
 
     /* Get the IMEI */
     get_imei(imei, sizeof(imei));
@@ -975,7 +1013,7 @@ void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb)
     state_event = cb;
 }
 
-#define THREAD_STACK_SIZE KB(2)
+#define THREAD_STACK_SIZE KB(4)
 static K_THREAD_STACK_DEFINE(pyrinas_cloud_thread_stack, THREAD_STACK_SIZE);
 K_THREAD_DEFINE(pyrinas_cloud_thread, K_THREAD_STACK_SIZEOF(pyrinas_cloud_thread_stack),
                 pyrinas_cloud_process, NULL, NULL, NULL,
