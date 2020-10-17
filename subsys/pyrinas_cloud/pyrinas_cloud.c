@@ -87,6 +87,7 @@ static struct k_work ota_done_work;
 static struct k_work on_connect_work;
 static struct k_work reconnect_work;
 static struct k_delayed_work fota_work;
+static struct k_delayed_work disconnect_work;
 
 /* Making the ota dat static */
 static struct pyrinas_cloud_ota_data ota_data;
@@ -388,6 +389,11 @@ static void on_connect_fn(struct k_work *unused)
     }
 }
 
+static void disconnect_work_fn(struct k_work *unused)
+{
+    pyrinas_cloud_disconnect();
+}
+
 static void fota_start_fn(struct k_work *unused)
 {
     ARG_UNUSED(unused);
@@ -403,8 +409,11 @@ static void fota_start_fn(struct k_work *unused)
     err = fota_download_start(ota_data.host, ota_data.file, CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG, 0, NULL);
     if (err)
     {
-        printk("fota_download_start error %d\n", err);
+        LOG_ERR("fota_download_start error %d\n", err);
         atomic_set(&ota_state_s, ota_state_error);
+
+        /* Reboot on error.. */
+        sys_reboot(0);
         return;
     }
 
@@ -415,7 +424,7 @@ static void fota_start_fn(struct k_work *unused)
 
 static void publish_evt_handler(const char *topic, size_t topic_len, const char *data, size_t data_len)
 {
-    printk("topic: %s topic_len: %d data_len: %d\n", topic, topic_len, data_len);
+    LOG_INF("topic: %s topic_len: %d data_len: %d\n", topic, topic_len, data_len);
 
     /* If its the OTA sub topic process */
     if (strcmp(ota_sub_topic, topic) == 0)
@@ -464,7 +473,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             // Check startup flag. If not set do this
             if (atomic_get(&ota_state_s) == ota_state_ready && atomic_get(&startup_complete_s) == 0)
             {
-                printk("Start upgrade\n");
+                LOG_DBG("Start upgrade\n");
 
                 /* Set OTA State */
                 atomic_set(&ota_state_s, ota_state_started);
@@ -473,7 +482,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 k_delayed_work_submit(&fota_work, K_SECONDS(5));
 
                 /* Force disconnect */
-                pyrinas_cloud_disconnect();
+                k_delayed_work_submit(&disconnect_work, K_SECONDS(2));
             }
             else
             {
@@ -777,6 +786,7 @@ static void state_update_work_fn(struct k_work *unused)
 static void work_init()
 {
     k_delayed_work_init(&fota_work, fota_start_fn);
+    k_delayed_work_init(&disconnect_work, disconnect_work_fn);
     k_work_init(&on_connect_work, on_connect_fn);
     k_work_init(&ota_reboot_work, reboot_work_fn);
     k_work_init(&ota_request_work, ota_request_work_fn);
@@ -912,18 +922,18 @@ void pyrinas_cloud_process()
             err = poll(&fds, 1, POLL_INTERVAL_MS);
             if (err < 0)
             {
-                printk("ERROR: poll %d\n", errno);
+                LOG_ERR("ERROR: poll %d\n", errno);
                 break;
             }
 
             err = mqtt_live(&client);
             if (err == 0)
             {
-                printk("[%s:%d] ping sent\n", __func__, __LINE__);
+                LOG_INF("[%s:%d] ping sent\n", __func__, __LINE__);
             }
             else if ((err != 0) && (err != -EAGAIN))
             {
-                printk("ERROR: mqtt_live %d\n", err);
+                LOG_ERR("ERROR: mqtt_live %d\n", err);
                 break;
             }
 
@@ -932,20 +942,20 @@ void pyrinas_cloud_process()
                 err = mqtt_input(&client);
                 if (err != 0)
                 {
-                    printk("ERROR: mqtt_input %d\n", err);
+                    LOG_ERR("ERROR: mqtt_input %d\n", err);
                     break;
                 }
             }
 
             if ((fds.revents & POLLERR) == POLLERR)
             {
-                printk("POLLERR\n");
+                LOG_ERR("POLLERR\n");
                 break;
             }
 
             if ((fds.revents & POLLNVAL) == POLLNVAL)
             {
-                printk("POLLNVAL\n");
+                LOG_ERR("POLLNVAL\n");
                 break;
             }
         }

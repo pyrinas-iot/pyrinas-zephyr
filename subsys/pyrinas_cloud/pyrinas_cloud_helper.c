@@ -7,6 +7,9 @@
 
 #include "pyrinas_cloud_helper.h"
 
+#include <logging/log.h>
+LOG_MODULE_REGISTER(pyrinas_cloud_helper);
+
 /* Gathers the numeric represnation of a string version*/
 // TODO: get these stupid ver_from_string working
 void ver_from_str(union pyrinas_cloud_version *ver, char *ver_str)
@@ -18,19 +21,19 @@ void ver_from_str(union pyrinas_cloud_version *ver, char *ver_str)
   char *end_ptr = ver_str + first_period - 1;
 
   ver->major = strtoul(start_ptr, &end_ptr, 10);
-  printk("ver: %d ", ver->major);
+  LOG_DBG("ver: %d ", ver->major);
 
   start_ptr = ver_str + first_period + 1;
   end_ptr = ver_str + second_period - 1;
 
   ver->minor = strtoul(start_ptr, &end_ptr, 10);
-  printk("%d ", ver->minor);
+  LOG_DBG("%d ", ver->minor);
 
   start_ptr = ver_str + second_period + 1;
   end_ptr = ver_str + strlen(ver_str) - 1;
 
   ver->patch = strtoul(start_ptr, &end_ptr, 10);
-  printk("%d\n", ver->patch);
+  LOG_DBG("%d\n", ver->patch);
 }
 
 /* Returns -1 if first is greater, 0 if equal, 1 if second is greater */
