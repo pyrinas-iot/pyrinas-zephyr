@@ -29,6 +29,9 @@ K_TIMER_DEFINE(telemetry_timer, telemetry_check_event, NULL);
 static void reconnect_timer_event(struct k_timer *timer);
 K_TIMER_DEFINE(reconnect_timer, reconnect_timer_event, NULL);
 
+static void ota_request_timer_event(struct k_timer *timer);
+K_TIMER_DEFINE(ota_request_timer, ota_request_timer_event, NULL);
+
 /* Telemetry interval */
 #define TELEMETRY_INTERVAL K_MINUTES(10)
 
@@ -78,6 +81,7 @@ static struct pollfd fds;
 /* Structures for work */
 static struct k_work state_update_work;
 static struct k_work publish_telemetry_work;
+static struct k_work ota_request_work;
 static struct k_work ota_reboot_work;
 static struct k_work ota_done_work;
 static struct k_work on_connect_work;
@@ -178,6 +182,11 @@ static void reconnect_timer_event(struct k_timer *timer)
 
     /* Restart timer until it's stopped by a connected event */
     k_timer_start(&reconnect_timer, RECONNECT_INTERVAL, K_SECONDS(10));
+}
+
+static void ota_request_timer_event(struct k_timer *timer)
+{
+    k_work_submit(&ota_request_work);
 }
 
 /**@brief Function to get IMEI
@@ -411,6 +420,10 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
     /* If its the OTA sub topic process */
     if (strcmp(ota_sub_topic, topic) == 0)
     {
+
+        /* Stop request timer*/
+        k_timer_stop(&ota_request_timer);
+
         /* Parse OTA event */
         int err = decode_ota_data(&ota_data, data, data_len);
 
@@ -638,6 +651,9 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         if (ota_sub_message_id == evt->param.suback.message_id)
         {
             publish_ota_check();
+
+            /* Start repeat timer if need be..*/
+            k_timer_start(&ota_request_timer, RECONNECT_INTERVAL, K_SECONDS(30));
         }
 
         break;
@@ -709,6 +725,11 @@ static int broker_init(void)
     return 0;
 }
 
+static void ota_request_work_fn(struct k_work *unused)
+{
+    publish_ota_check();
+}
+
 static void reboot_work_fn(struct k_work *unused)
 {
 
@@ -758,6 +779,7 @@ static void work_init()
     k_delayed_work_init(&fota_work, fota_start_fn);
     k_work_init(&on_connect_work, on_connect_fn);
     k_work_init(&ota_reboot_work, reboot_work_fn);
+    k_work_init(&ota_request_work, ota_request_work_fn);
     k_work_init(&ota_done_work, ota_done_work_fn);
     k_work_init(&reconnect_work, reconnect_work_fn);
     k_work_init(&publish_telemetry_work, publish_telemetry_work_fn);
