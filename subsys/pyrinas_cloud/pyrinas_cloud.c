@@ -89,6 +89,9 @@ static struct k_work reconnect_work;
 static struct k_delayed_work fota_work;
 static struct k_delayed_work disconnect_work;
 
+/* Thread id */
+static k_tid_t pyrinas_cloud_thread_id;
+
 /* Making the ota dat static */
 static struct pyrinas_cloud_ota_data ota_data;
 
@@ -402,11 +405,17 @@ static void fota_start_fn(struct k_work *unused)
 
     /* Start the FOTA process */
     int err;
+    int sec_tag = -1;
 
-    printk("%s/%s using tag %d\n", ota_data.host, ota_data.file, CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG);
+    /* Set the security tag if TLS is enabled. */
+#if defined(CONFIG_DOWNLOAD_CLIENT_TLS)
+    sec_tag = CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG;
+#endif
+
+    LOG_DBG("%s/%s using tag %d\n", ota_data.host, ota_data.file, sec_tag);
 
     /* Start download uses default port and APN*/
-    err = fota_download_start(ota_data.host, ota_data.file, CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG, 0, NULL);
+    err = fota_download_start(ota_data.host, ota_data.file, sec_tag, 0, NULL);
     if (err)
     {
         LOG_ERR("fota_download_start error %d\n", err);
@@ -424,7 +433,7 @@ static void fota_start_fn(struct k_work *unused)
 
 static void publish_evt_handler(const char *topic, size_t topic_len, const char *data, size_t data_len)
 {
-    LOG_INF("topic: %s topic_len: %d data_len: %d\n", topic, topic_len, data_len);
+    LOG_INF("topic: %s topic_len: %d data_len: %d", topic, topic_len, data_len);
 
     /* If its the OTA sub topic process */
     if (strcmp(ota_sub_topic, topic) == 0)
@@ -440,30 +449,23 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
         int result = 0;
         if (err == 0)
         {
-            /* First string compare */
-            result = strncmp(STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, sizeof(ota_data.version));
 
-            if (result != 0)
+            union pyrinas_cloud_version current, incoming;
+
+            /* Compare incoming version with current version */
+            ver_from_str(&current, STRINGIFY(PYRINAS_APP_VERSION));
+            ver_from_str(&incoming, ota_data.version);
+
+            /*Check numeric*/
+            result = ver_comp(&current, &incoming);
+
+            LOG_INF("Version check %s vs %s = %d", STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, result);
+
+            /* If the strings are not equal do stuff*/
+            if (result == 0 && strncmp(STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, sizeof(ota_data.version)) != 0)
             {
-                union pyrinas_cloud_version current, incoming;
-
-                /* Compare incoming version with current version */
-                ver_from_str(&current, STRINGIFY(PYRINAS_APP_VERSION));
-                ver_from_str(&incoming, ota_data.version);
-
-                /*Check numeric*/
-                result = ver_comp(&current, &incoming);
-
-                LOG_INF("Version check %s vs %s = %d", STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, result);
+                result = 1;
             }
-            else
-            {
-                LOG_INF("Ver strings equal!");
-            }
-        }
-        else
-        {
-            LOG_WRN("No valid ota data");
         }
 
         /*If equal and force or if incoming is greater*/
@@ -481,8 +483,8 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 /* Start upgrade here*/
                 k_delayed_work_submit(&fota_work, K_SECONDS(5));
 
-                /* Force disconnect */
-                k_delayed_work_submit(&disconnect_work, K_SECONDS(2));
+                /* Puase thread */
+                k_thread_suspend(pyrinas_cloud_thread_id);
             }
             else
             {
@@ -910,6 +912,9 @@ int pyrinas_cloud_connect()
 void pyrinas_cloud_process()
 {
     int err;
+
+    /* Get thread id*/
+    pyrinas_cloud_thread_id = k_current_get();
 
     while (true)
     {
