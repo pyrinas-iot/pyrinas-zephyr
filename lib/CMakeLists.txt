@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-if (CONFIG_PYRINAS_ENABLED)
+if (CONFIG_PYRINAS_BLUETOOTH_ENABLED)
 zephyr_library()
 zephyr_library_sources(
   app/app_weak.c

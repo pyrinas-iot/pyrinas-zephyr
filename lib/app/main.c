@@ -267,7 +267,7 @@ void main_thread_fn()
 		/* User loop function */
 		loop();
 
-#ifdef PYRINAS_ENABLED
+#ifdef CONFIG_PYRINAS_BLUETOOTH_ENABLED
 		/* BLE Process */
 		ble_process();
 #endif
