@@ -35,7 +35,7 @@ LOG_MODULE_REGISTER(main);
 #define GPIO0 DT_LABEL(DT_NODELABEL(gpio0))
 struct device *gpio;
 
-static K_SEM_DEFINE(main_thread_proceed, 0, 1);
+static K_SEM_DEFINE(main_thread_proceed_sem, 0, 1);
 
 #if defined(CONFIG_FILE_SYSTEM_LITTLEFS)
 #include <fs/fs.h>
@@ -151,7 +151,7 @@ void pyrinas_cloud_evt_handler(struct pyrinas_cloud_evt evt)
 	if (evt.ota_state == ota_state_ready)
 	{
 		/* Start main thread */
-		k_sem_give(&main_thread_proceed);
+		k_sem_give(&main_thread_proceed_sem);
 	}
 	else
 	{
@@ -232,13 +232,9 @@ void main(void)
 	/* Connect */
 	pyrinas_cloud_connect();
 #endif
-}
-
-void main_thread_fn()
-{
 
 	/* Wait for ready */
-	k_sem_take(&main_thread_proceed, K_FOREVER);
+	k_sem_take(&main_thread_proceed_sem, K_FOREVER);
 
 	/* User Setup function */
 	setup();
@@ -273,9 +269,3 @@ void main_thread_fn()
 #endif
 	}
 }
-
-#define THREAD_STACK_SIZE KB(4)
-static K_THREAD_STACK_DEFINE(main_thread_stack, THREAD_STACK_SIZE);
-K_THREAD_DEFINE(main_thread, K_THREAD_STACK_SIZEOF(main_thread_stack),
-								main_thread_fn, NULL, NULL, NULL,
-								K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
