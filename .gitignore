@@ -8,3 +8,6 @@ ext/nanopb
 
 # Ignore temp
 old
+
+# Ignore build dir
+build
