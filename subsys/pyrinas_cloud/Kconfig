@@ -58,10 +58,6 @@ config PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC
 	string "Application MQTT subscribe topic"
 	default "%.*s/app/sub/%.*s"
 
-config PYRINAS_CLOUD_MQTT_CLIENT_ID
-	string "MQTT Client ID"
-	default "client"
-
 config PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME
 	string "MQTT broker hostname"
 	default "mqtt.yourhost.com"
