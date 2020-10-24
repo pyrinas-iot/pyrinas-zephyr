@@ -81,6 +81,7 @@ static struct k_work ota_reboot_work;
 static struct k_work ota_done_work;
 static struct k_work on_connect_work;
 static struct k_work reconnect_work;
+static struct k_delayed_work ota_check_subscribed_work;
 static struct k_delayed_work fota_work;
 static struct k_delayed_work disconnect_work;
 
@@ -398,7 +399,17 @@ static void on_connect_fn(struct k_work *unused)
 
         /* Subscribe to OTA topic */
         subscribe(ota_sub_topic, strlen(ota_sub_topic), ota_sub_message_id);
+
+        /* Delay work to make sure we are *at least* subscribed to OTA*/
+        k_delayed_work_submit(&ota_check_subscribed_work, K_SECONDS(30));
     }
+}
+
+static void ota_check_subscribed_work_fn(struct k_work *unused)
+{
+
+    /* Check if, after a certain amount of time, no response has been had. If no, assert and reboot*/
+    __ASSERT_NO_MSG(atomic_get(&initial_ota_check) == 1);
 }
 
 static void disconnect_work_fn(struct k_work *unused)
@@ -796,6 +807,7 @@ static void work_init()
 {
     k_delayed_work_init(&fota_work, fota_start_fn);
     k_delayed_work_init(&disconnect_work, disconnect_work_fn);
+    k_delayed_work_init(&ota_check_subscribed_work, ota_check_subscribed_work_fn);
     k_work_init(&on_connect_work, on_connect_fn);
     k_work_init(&ota_reboot_work, reboot_work_fn);
     k_work_init(&ota_request_work, ota_request_work_fn);
