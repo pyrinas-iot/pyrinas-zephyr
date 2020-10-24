@@ -98,7 +98,6 @@ static pyrinas_cloud_state_evt_t evt_callback = NULL;
 static pyrinas_cloud_state_evt_t state_event = NULL;
 
 /* Statically track message id*/
-static uint16_t message_id = 0;
 static uint16_t ota_sub_message_id = 0;
 
 /* Version string */
@@ -245,7 +244,7 @@ static int unsubscribe(char *topic, size_t len)
         .qos = MQTT_QOS_1_AT_LEAST_ONCE};
 
     const struct mqtt_subscription_list subscription_list = {
-        .list = &subscribe_topic, .list_count = 1, .message_id = 4321};
+        .list = &subscribe_topic, .list_count = 1, .message_id = sys_rand32_get()};
 
     printk("Unsubscribing to: %s len %u\n", topic, len);
 
@@ -309,7 +308,7 @@ static void publish_ota_check()
     encode_ota_request(ota_cmd_type_check, buf, sizeof(buf), &size);
 
     /* Publish the data */
-    int err = data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, message_id++);
+    int err = data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, sys_rand32_get());
     if (err)
     {
         LOG_ERR("Unable to publish OTA check. Error: %d", err);
@@ -326,7 +325,7 @@ static void publish_ota_done()
     encode_ota_request(ota_cmd_type_done, buf, sizeof(buf), &size);
 
     /* Publish the data */
-    int err = data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, message_id++);
+    int err = data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, sys_rand32_get());
     if (err)
     {
         LOG_ERR("Unable to publish OTA done. Error: %d", err);
@@ -360,7 +359,7 @@ static void publish_telemetry()
     }
 
     // Publish telemetry
-    err = data_publish(telemetry_pub_topic, strlen(telemetry_pub_topic), buf, payload_len, message_id++);
+    err = data_publish(telemetry_pub_topic, strlen(telemetry_pub_topic), buf, payload_len, sys_rand32_get());
     if (err)
     {
         LOG_ERR("Unable to publish telemetry. Error: %d", err);
@@ -395,10 +394,10 @@ static void on_connect_fn(struct k_work *unused)
     {
 
         /* Save this for later */
-        ota_sub_message_id = message_id;
+        ota_sub_message_id = (uint16_t)sys_rand32_get();
 
         /* Subscribe to OTA topic */
-        subscribe(ota_sub_topic, strlen(ota_sub_topic), message_id++);
+        subscribe(ota_sub_topic, strlen(ota_sub_topic), ota_sub_message_id);
     }
 }
 
@@ -512,7 +511,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 k_work_submit(&ota_done_work);
 
                 /* Subscribe to Application topic */
-                subscribe(application_sub_topic, strlen(application_sub_topic), message_id++);
+                subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
 
                 // /* Callback to main to notify complete */
                 if (evt_callback)
@@ -980,11 +979,8 @@ int pyrinas_cloud_publish_w_uid(char *uid, char *type, uint8_t *data, size_t len
              strlen(uid), uid,
              strlen(type), type);
 
-    /* Save the message ID to check for an ACK */
-    uint16_t message_id = (uint16_t)sys_rand32_get();
-
     /* Publish the data */
-    int err = data_publish(topic, strlen(topic), data, len, message_id);
+    int err = data_publish(topic, strlen(topic), data, len, sys_rand32_get());
     if (err)
     {
         LOG_ERR("Unable to publish w/ UID. Error: %d", err);
