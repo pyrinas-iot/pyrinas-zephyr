@@ -133,19 +133,24 @@ int cellular_info_init()
   err = modem_info_init();
   if (err)
   {
-    LOG_ERR("Could not initialize modem info module");
+    LOG_ERR("Could not initialize modem info module. Err %i", err);
     return err;
   }
 
   err = modem_info_params_init(&modem_info);
   if (err)
   {
-    LOG_ERR("Could not initialize modem info parameters");
+    LOG_ERR("Could not initialize modem info parameters. Err %i", err);
     return err;
   }
 
   /* Register the callback to get the signal strength */
-  modem_info_rsrp_register(modem_rsrp_handler);
+  err = modem_info_rsrp_register(modem_rsrp_handler);
+  if (err)
+  {
+    LOG_ERR("Could not subscribe to rsrp events. Err: %i", err);
+    return err;
+  }
 
   return 0;
 }
