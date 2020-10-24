@@ -238,34 +238,4 @@ void main(void)
 
 	/* User Setup function */
 	setup();
-
-	while (true)
-	{
-#ifdef CONFIG_PCF85063A
-		if (!timer_flag)
-		{
-			int ret = counter_get_pending_int(rtc);
-			LOG_INF("Interrupt? %d", ret);
-
-			if (ret == 1)
-			{
-				timer_flag = true;
-
-				int ret = counter_cancel_channel_alarm(rtc, 0);
-				if (ret)
-				{
-					LOG_ERR("Unable to cancel channel alarm!");
-				}
-			}
-		}
-#endif
-
-		/* User loop function */
-		loop();
-
-#ifdef CONFIG_PYRINAS_BLUETOOTH_ENABLED
-		/* BLE Process */
-		ble_process();
-#endif
-	}
 }
