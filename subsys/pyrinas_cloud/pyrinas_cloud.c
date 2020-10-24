@@ -688,7 +688,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         break;
 
     default:
-        printk("[%s:%d] default: %d\n", __func__, __LINE__, evt->type);
+        LOG_INF("[%s:%d] default: %d", __func__, __LINE__, evt->type);
         break;
     }
 }
