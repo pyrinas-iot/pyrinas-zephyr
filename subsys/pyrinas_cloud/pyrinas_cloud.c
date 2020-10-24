@@ -1071,9 +1071,8 @@ void pyrinas_cloud_process()
     }
 }
 
-#define THREAD_STACK_SIZE KB(4)
-#define PYRINAS_CLOUD_THREAD_PRIORITY (CONFIG_MAIN_THREAD_PRIORITY - 1)
+#define THREAD_STACK_SIZE KB(2)
 static K_THREAD_STACK_DEFINE(pyrinas_cloud_thread_stack, THREAD_STACK_SIZE);
 K_THREAD_DEFINE(pyrinas_cloud_thread, K_THREAD_STACK_SIZEOF(pyrinas_cloud_thread_stack),
                 pyrinas_cloud_process, NULL, NULL, NULL,
-                PYRINAS_CLOUD_THREAD_PRIORITY, 0, 0);
+                K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
