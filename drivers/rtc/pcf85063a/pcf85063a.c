@@ -31,7 +31,7 @@ static int pcf85063a_start(struct device *dev)
 {
 
 	// Get the data pointer
-	struct pcf85063a_data *data = pcf85063a_dev->data;
+	struct pcf85063a_data *data = pcf85063a_dev->driver_data;
 
 	// Turn it back on (active low)
 	uint8_t reg = 0;
@@ -53,7 +53,7 @@ static int pcf85063a_stop(struct device *dev)
 {
 
 	// Get the data pointer
-	struct pcf85063a_data *data = pcf85063a_dev->data;
+	struct pcf85063a_data *data = pcf85063a_dev->driver_data;
 
 	// Turn it off
 	uint8_t reg = PCF85063A_CTRL1_STOP;
@@ -84,7 +84,7 @@ static int pcf85063a_set_alarm(
 	uint8_t ticks = (uint8_t)alarm_cfg->ticks;
 
 	// Get the data pointer
-	struct pcf85063a_data *data = pcf85063a_dev->data;
+	struct pcf85063a_data *data = pcf85063a_dev->driver_data;
 
 	// Ret val for error checking
 	int ret;
@@ -132,7 +132,7 @@ static int pcf85063a_cancel_alarm(struct device *dev, uint8_t chan_id)
 {
 
 	// Get the data pointer
-	struct pcf85063a_data *data = pcf85063a_dev->data;
+	struct pcf85063a_data *data = pcf85063a_dev->driver_data;
 
 	// Ret val for error checking
 	int ret;
@@ -176,7 +176,7 @@ static uint32_t pcf85063a_get_pending_int(struct device *dev)
 {
 
 	// Get the data pointer
-	struct pcf85063a_data *data = pcf85063a_dev->data;
+	struct pcf85063a_data *data = pcf85063a_dev->driver_data;
 
 	// Start with 0
 	uint8_t reg = 0;
@@ -231,7 +231,7 @@ int pcf85063a_init(struct device *dev)
 	pcf85063a_dev = dev;
 
 	/* Get the i2c device binding*/
-	struct pcf85063a_data *data = pcf85063a_dev->data;
+	struct pcf85063a_data *data = pcf85063a_dev->driver_data;
 	data->i2c = device_get_binding(DT_BUS_LABEL(DT_DRV_INST(0)));
 
 	// Set I2C Device.
