@@ -54,20 +54,18 @@ static encoded_data_handler_t m_evt_cb = NULL;
 static void bt_send_work_handler(struct k_work *work);
 static struct k_delayed_work bt_send_work;
 
+static void bt_start_scan_work_handler(struct k_work *work);
+static struct k_delayed_work bt_start_scan_work;
+
 /* Storing static config*/
 static ble_central_init_t m_config;
 
 /* Track scan failure */
 static atomic_t scan_failure;
 
-void ble_central_process(void)
+static void bt_start_scan_work_handler(struct k_work *work)
 {
-
-		// if not fully connected && not scanning, scan
-		if (atomic_get(&scan_failure) == 1)
-		{
-				ble_central_scan_start();
-		}
+	bt_start_scan();
 }
 
 static void bt_send_work_handler(struct k_work *work)
@@ -458,6 +456,8 @@ void ble_central_scan_start()
 		{
 				LOG_WRN("Scanning failed to start, err %d\n", err);
 				atomic_set(&scan_failure, 1);
+				
+				k_delayed_work_submit(bt_start_scan_work, K_SECONDS(1));
 				return;
 		}
 
@@ -692,6 +692,7 @@ int ble_central_init(ble_central_init_t *p_init)
 
 		/* Set up work */
 		k_delayed_work_init(&bt_send_work, bt_send_work_handler);
+		k_delayed_work_init(&bt_start_scan_work, bt_start_scan_work_handler);
 
 		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
 		{

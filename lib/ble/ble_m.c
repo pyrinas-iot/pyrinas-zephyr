@@ -464,20 +464,6 @@ void ble_subscribe_raw(raw_susbcribe_handler_t handler)
     m_raw_handler_ext = handler;
 }
 
-// deque messages, fire off the appropriate handlers
-void ble_process()
-{
-
-    // Return if this module is not initalized
-    if (!m_init_complete)
-        return;
-
-    // Process any central tasks
-    #if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
-    ble_central_process();
-    #endif
-}
-
 // TODO: more optimized way of doing this?
 static int subscriber_search(protobuf_event_t_name_t *event_name)
 {

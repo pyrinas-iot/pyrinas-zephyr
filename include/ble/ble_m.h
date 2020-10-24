@@ -104,7 +104,4 @@ bool ble_is_connected(void);
  */
 uint16_t ble_get_conn_handle(void);
 
-// TODO: document this
-void ble_process(void);
-
 #endif // BLE_M_H__
