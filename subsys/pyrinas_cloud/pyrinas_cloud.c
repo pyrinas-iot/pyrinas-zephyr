@@ -26,14 +26,8 @@ LOG_MODULE_REGISTER(pyrinas_cloud);
 static void telemetry_check_event(struct k_timer *timer);
 K_TIMER_DEFINE(telemetry_timer, telemetry_check_event, NULL);
 
-static void reconnect_timer_event(struct k_timer *timer);
-K_TIMER_DEFINE(reconnect_timer, reconnect_timer_event, NULL);
-
 /* Telemetry interval */
 #define TELEMETRY_INTERVAL K_MINUTES(10)
-
-/* Reconnect interval */
-#define RECONNECT_INTERVAL K_SECONDS(30)
 
 /* Security tag for fetching certs */
 static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
@@ -67,23 +61,19 @@ static K_SEM_DEFINE(pyrinas_cloud_thread_sem, 0, 1);
 static atomic_val_t cloud_state_s = ATOMIC_INIT(cloud_state_disconnected);
 static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
 static atomic_val_t startup_complete_s = ATOMIC_INIT(0);
-static atomic_val_t reconnect = ATOMIC_INIT(0);
 static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
 
 /* File descriptor */
 static struct pollfd fds;
 
 /* Structures for work */
-static struct k_work state_update_work;
 static struct k_work publish_telemetry_work;
 static struct k_work ota_request_work;
 static struct k_work ota_reboot_work;
 static struct k_work ota_done_work;
 static struct k_work on_connect_work;
-static struct k_work reconnect_work;
 static struct k_delayed_work ota_check_subscribed_work;
 static struct k_delayed_work fota_work;
-static struct k_delayed_work disconnect_work;
 
 /* Thread id */
 static k_tid_t pyrinas_cloud_thread_id;
@@ -95,8 +85,8 @@ static struct pyrinas_cloud_ota_data ota_data;
 pryinas_cloud_application_cb_entry_t *callbacks[CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT];
 
 /* Cloud state callbacks */
-static pyrinas_cloud_state_evt_t evt_callback = NULL;
-static pyrinas_cloud_state_evt_t state_event = NULL;
+static pyrinas_cloud_ota_state_evt_t ota_state_callback = NULL;
+static pyrinas_cloud_state_evt_t cloud_state_callback = NULL;
 
 /* Statically track message id*/
 static uint16_t ota_sub_message_id = 0;
@@ -170,17 +160,6 @@ int pyrinas_cloud_unsubscribe(char *topic)
 
     /* Entry not found */
     return -ENOENT;
-}
-
-static void reconnect_timer_event(struct k_timer *timer)
-{
-    LOG_DBG("Reconnect!\n");
-
-    /* Start reconnect work */
-    k_work_submit(&reconnect_work);
-
-    /* Restart timer until it's stopped by a connected event */
-    k_timer_start(&reconnect_timer, RECONNECT_INTERVAL, K_SECONDS(10));
 }
 
 /**@brief Function to get IMEI
@@ -412,11 +391,6 @@ static void ota_check_subscribed_work_fn(struct k_work *unused)
     __ASSERT_NO_MSG(atomic_get(&initial_ota_check) == 1);
 }
 
-static void disconnect_work_fn(struct k_work *unused)
-{
-    pyrinas_cloud_disconnect();
-}
-
 static void fota_start_fn(struct k_work *unused)
 {
     ARG_UNUSED(unused);
@@ -441,6 +415,10 @@ static void fota_start_fn(struct k_work *unused)
         LOG_ERR("fota_download_start error %d\n", err);
         atomic_set(&ota_state_s, ota_state_error);
 
+        /* Send to calback */
+        if (ota_state_callback)
+            ota_state_callback(ota_state_s);
+
         /* Reboot on error.. */
         sys_reboot(0);
         return;
@@ -448,6 +426,10 @@ static void fota_start_fn(struct k_work *unused)
 
     /* Set that we're busy now */
     atomic_set(&ota_state_s, ota_state_downloading);
+
+    /* Send to calback */
+    if (ota_state_callback)
+        ota_state_callback(ota_state_s);
 #endif
 }
 
@@ -497,6 +479,10 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 /* Set OTA State */
                 atomic_set(&ota_state_s, ota_state_started);
 
+                /* Send to calback */
+                if (ota_state_callback)
+                    ota_state_callback(ota_state_s);
+
                 /* Start upgrade here*/
                 k_delayed_work_submit(&fota_work, K_SECONDS(5));
 
@@ -524,16 +510,9 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 /* Subscribe to Application topic */
                 subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
 
-                // /* Callback to main to notify complete */
-                if (evt_callback)
-                {
-                    struct pyrinas_cloud_evt evt = {
-                        .cloud_state = atomic_get(&cloud_state_s),
-                        .ota_state = atomic_get(&ota_state_s)};
-
-                    // Send the callback yo
-                    evt_callback(evt);
-                }
+                /* Callback to main to notify complete */
+                if (ota_state_callback)
+                    ota_state_callback(ota_state_s);
             }
         }
 
@@ -573,16 +552,19 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         if (evt->result != 0)
         {
             LOG_ERR("MQTT connect failed %d", evt->result);
+
+            /* Not connected */
+            atomic_set(&cloud_state_s, cloud_state_disconnected);
+
+            /* Send to calback */
+            if (cloud_state_callback)
+                cloud_state_callback(cloud_state_s);
             break;
         }
 
         LOG_INF("MQTT client connected!");
 
-        /* Update state in main context */
-        k_work_submit(&state_update_work);
-
-        /* Stop any reconnect attempts */
-        k_timer_stop(&reconnect_timer);
+        // TODO: process state callack
 
         /* On connect work */
         k_work_submit(&on_connect_work);
@@ -600,21 +582,13 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         /* Stop the timer, we're disconnected*/
         k_timer_stop(&telemetry_timer);
 
-        /* If not forced, try to reconnect */
-        if (atomic_get(&cloud_state_s) != cloud_state_force_disconnected)
-        {
-            /* Set state */
-            atomic_set(&cloud_state_s, cloud_state_disconnected);
+        /* Set state */
+        atomic_set(&cloud_state_s, cloud_state_disconnected);
 
-            /* Update state in main context */
-            k_work_submit(&state_update_work);
+        /* Send to calback */
+        if (cloud_state_callback)
+            cloud_state_callback(cloud_state_s);
 
-            /* Set reconnec state */
-            atomic_set(&reconnect, 1);
-
-            /* Start reconnect timer*/
-            k_timer_start(&reconnect_timer, RECONNECT_INTERVAL, K_NO_WAIT);
-        }
         break;
 
     case MQTT_EVT_PUBLISH:
@@ -769,18 +743,10 @@ static void reboot_work_fn(struct k_work *unused)
 
     /* Rebooting state */
     atomic_set(&ota_state_s, ota_state_rebooting);
-}
 
-static void reconnect_work_fn(struct k_work *unused)
-{
-
-    int err;
-
-    err = pyrinas_cloud_connect();
-    if (err)
-    {
-        LOG_ERR("Unable to reconnect. Err %d", err);
-    }
+    /* Send to calback */
+    if (ota_state_callback)
+        ota_state_callback(ota_state_s);
 }
 
 static void ota_done_work_fn(struct k_work *unused)
@@ -789,32 +755,15 @@ static void ota_done_work_fn(struct k_work *unused)
     publish_ota_done();
 }
 
-static void state_update_work_fn(struct k_work *unused)
-{
-
-    /* Send state event*/
-    if (state_event != NULL)
-    {
-        struct pyrinas_cloud_evt evt = {
-            .cloud_state = atomic_get(&cloud_state_s),
-            .ota_state = atomic_get(&ota_state_s)};
-
-        state_event(evt);
-    }
-}
-
 static void work_init()
 {
     k_delayed_work_init(&fota_work, fota_start_fn);
-    k_delayed_work_init(&disconnect_work, disconnect_work_fn);
     k_delayed_work_init(&ota_check_subscribed_work, ota_check_subscribed_work_fn);
     k_work_init(&on_connect_work, on_connect_fn);
     k_work_init(&ota_reboot_work, reboot_work_fn);
     k_work_init(&ota_request_work, ota_request_work_fn);
     k_work_init(&ota_done_work, ota_done_work_fn);
-    k_work_init(&reconnect_work, reconnect_work_fn);
     k_work_init(&publish_telemetry_work, publish_telemetry_work_fn);
-    k_work_init(&state_update_work, state_update_work_fn);
 }
 
 /**@brief Initialize the MQTT client structure
@@ -871,6 +820,10 @@ static void fota_evt(const struct fota_download_evt *evt)
         /* Set the state */
         atomic_set(&ota_state_s, ota_state_error);
 
+        /* Send to calback */
+        if (ota_state_callback)
+            ota_state_callback(ota_state_s);
+
         /* Reboot work start */
         k_work_submit(&ota_reboot_work);
 
@@ -880,6 +833,10 @@ static void fota_evt(const struct fota_download_evt *evt)
 
         /* Set the state */
         atomic_set(&ota_state_s, ota_state_done);
+
+        /* Send to calback */
+        if (ota_state_callback)
+            ota_state_callback(ota_state_s);
 
         /* Reboot work start */
         k_work_submit(&ota_reboot_work);
@@ -896,20 +853,14 @@ int pyrinas_cloud_connect()
 
     int err;
 
+    /*Check if already connected*/
+    if (atomic_get(&cloud_state_s) == cloud_state_connected)
+        return -EINPROGRESS;
+
     /* Connect to MQTT */
     err = mqtt_connect(&client);
-    if (client.internal.state == 0x4)
+    if (err != 0)
     {
-        LOG_WRN("Already connected!");
-
-        /* Stop reconnect work */
-        k_timer_stop(&reconnect_timer);
-    }
-    else if (err != 0)
-    {
-        /* Schedule reconnect work */
-        k_timer_start(&reconnect_timer, RECONNECT_INTERVAL, K_SECONDS(30));
-
         LOG_ERR("mqtt_connect %d", err);
         return err;
     }
@@ -921,8 +872,11 @@ int pyrinas_cloud_connect()
     /* Set state */
     atomic_set(&cloud_state_s, cloud_state_connected);
 
+    /* Send to calback */
+    if (cloud_state_callback)
+        cloud_state_callback(cloud_state_s);
+
     /* Start the thread (if not already)*/
-    k_sem_reset(&pyrinas_cloud_thread_sem);
     k_sem_give(&pyrinas_cloud_thread_sem);
 
     return 0;
@@ -937,14 +891,6 @@ int pyrinas_cloud_disconnect()
 {
     int err;
 
-    printk("[%s:%d] MQTT client force disconnect!\n", __func__, __LINE__);
-
-    /* Force disconnect flag enabled */
-    atomic_set(&cloud_state_s, cloud_state_force_disconnected);
-
-    /* Update state in main context */
-    k_work_submit(&state_update_work);
-
     err = mqtt_disconnect(&client);
     if (err)
     {
@@ -955,10 +901,10 @@ int pyrinas_cloud_disconnect()
     return 0;
 }
 
-void pyrinas_cloud_init(pyrinas_cloud_state_evt_t cb)
+void pyrinas_cloud_init(pyrinas_cloud_ota_state_evt_t cb)
 {
     /*Set the callback*/
-    evt_callback = cb;
+    ota_state_callback = cb;
 
     /* Get the IMEI */
     get_imei(imei, sizeof(imei));
@@ -1009,7 +955,7 @@ int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
 
 void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb)
 {
-    state_event = cb;
+    cloud_state_callback = cb;
 }
 
 void pyrinas_cloud_process()
@@ -1052,6 +998,7 @@ void pyrinas_cloud_process()
                 if (err != 0)
                 {
                     LOG_ERR("ERROR: mqtt_input %d\n", err);
+                    mqtt_abort(&client);
                     break;
                 }
             }
@@ -1059,12 +1006,14 @@ void pyrinas_cloud_process()
             if ((fds.revents & POLLERR) == POLLERR)
             {
                 LOG_ERR("POLLERR\n");
+                mqtt_abort(&client);
                 break;
             }
 
             if ((fds.revents & POLLNVAL) == POLLNVAL)
             {
                 LOG_ERR("POLLNVAL\n");
+                mqtt_abort(&client);
                 break;
             }
         }

@@ -51,6 +51,9 @@ static struct fs_mount_t lfs_storage_mnt = {
 };
 #endif
 
+/* Work defs */
+static struct k_delayed_work reconnect_work;
+
 static void flash_init()
 {
 #if defined(CONFIG_FILE_SYSTEM_LITTLEFS)
@@ -143,19 +146,46 @@ static void rtc_init()
 static bool timer_flag = false;
 #endif
 
-void pyrinas_cloud_evt_handler(struct pyrinas_cloud_evt evt)
+void pyrinas_cloud_ota_evt_handler(enum pyrinas_cloud_ota_state state)
 {
 
-	LOG_DBG("pyrinas_cloud_evt_handler: %d %d", evt.cloud_state, evt.ota_state);
+	LOG_DBG("pyrinas_cloud_evt_handler: %d", state);
 
-	if (evt.ota_state == ota_state_ready)
+	switch (state)
 	{
+	case ota_state_ready:
 		/* Start main thread */
 		k_sem_give(&main_thread_proceed_sem);
-	}
-	else
-	{
+		break;
+	default:
 		LOG_INF("FOTA in progress.");
+		break;
+	}
+}
+
+static void cloud_state_callback(enum pryinas_cloud_state state)
+{
+	switch (state)
+	{
+	case cloud_state_disconnected:
+		LOG_WRN("Disconnected!");
+		/*Reconnect*/
+		k_delayed_work_submit(&reconnect_work, K_SECONDS(2));
+		break;
+
+	case cloud_state_connected:
+		LOG_INF("Connected!");
+		break;
+	}
+}
+
+void reconnect_work_fn(struct k_work *item)
+{
+	int err = pyrinas_cloud_connect();
+	if (err && err != EINPROGRESS)
+	{
+		LOG_WRN("Unable to re-connect. Err: %d", err);
+		k_delayed_work_submit(&reconnect_work, K_SECONDS(30));
 	}
 }
 
@@ -226,8 +256,14 @@ void main(void)
 	/* Configure modem params */
 	cellular_info_init();
 
+	/* Work init*/
+	k_delayed_work_init(&reconnect_work, reconnect_work_fn);
+
 	/* Init Pyrinas Cloud */
-	pyrinas_cloud_init(pyrinas_cloud_evt_handler);
+	pyrinas_cloud_init(pyrinas_cloud_ota_evt_handler);
+
+	/* Callback time*/
+	pyrinas_cloud_register_state_evt(cloud_state_callback);
 
 	/* Connect */
 	pyrinas_cloud_connect();
