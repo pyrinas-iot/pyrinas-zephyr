@@ -21,4 +21,7 @@ char cellular_get_signal_strength();
 /* Power off/disconnect */
 int cellular_off();
 
+/* Cellular on*/
+int cellular_on();
+
 #endif /* _MODEM_H */

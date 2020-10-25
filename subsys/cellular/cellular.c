@@ -85,19 +85,25 @@ void cellular_configure(void)
 #endif /* defined(CONFIG_LTE_LINK_CONTROL) */
 }
 
+int cellular_on()
+{
+  LOG_INF("Cellular on");
+  int err = lte_lc_normal();
+  if (err)
+    LOG_ERR("Unable to turn cellular on. Err: %d", err);
+
+  return err;
+}
+
 int cellular_off()
 {
   /* Turn off and shutdown modem */
-  LOG_INF("LTE link disconnect & power off");
+  LOG_INF("Cellular off");
   int err = lte_lc_power_off();
-
   if (err)
-  {
-    LOG_ERR("lte_lc_power_off failed: %d", err);
-    return err;
-  }
+    LOG_ERR("Unable to turn cellular off. Err: %d", err);
 
-  return 0;
+  return err;
 }
 
 /**@brief Returns rsrp so it can be use elsewhere (like Pyrinas Cloud)
