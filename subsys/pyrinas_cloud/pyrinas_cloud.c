@@ -321,23 +321,32 @@ static void publish_ota_done()
     }
 }
 
-static void publish_telemetry()
+static void publish_telemetry(bool has_version)
 {
 
+    struct pyrinas_cloud_telemetry_data data;
     char buf[64];
     size_t payload_len = 0;
     int err = 0;
 
-    // Intialize data
-    struct pyrinas_cloud_telemetry_data data = {
-        .has_rsrp = true,
-        .rsrp = cellular_get_signal_strength(),
-    };
+    /*Get rsrp*/
+    char rsrp = cellular_get_signal_strength();
+    if (rsrp <= RSRP_THRESHOLD)
+    {
+        data.has_rsrp = true;
+        data.rsrp = rsrp;
+    }
+    else
+    {
+        data.has_rsrp = false;
+    }
 
-    LOG_DBG("RSRP %d %i", data.has_rsrp, data.rsrp);
+    LOG_INF("RSRP %d %i", data.has_rsrp, data.rsrp);
 
     // Copy over version string
-    strncpy(data.version, version_string, sizeof(data.version));
+    data.has_version = has_version;
+    if (has_version)
+        strncpy(data.version, version_string, sizeof(data.version));
 
     // Encode data
     err = encode_telemetry_data(&data, buf, sizeof(buf), &payload_len);
@@ -358,7 +367,7 @@ static void publish_telemetry()
 static void publish_telemetry_work_fn(struct k_work *unused)
 {
     /* Publish telemetry */
-    publish_telemetry();
+    publish_telemetry(false);
 }
 
 static void telemetry_check_event(struct k_timer *timer)
@@ -376,7 +385,7 @@ static void on_connect_fn(struct k_work *unused)
     LOG_DBG("[%s:%d] on connect work function!", __func__, __LINE__);
 
     /* Publish telemetry */
-    publish_telemetry();
+    publish_telemetry(true);
 
     /* Trigger OTA check */
     if (atomic_get(&ota_state_s) == ota_state_ready)

@@ -83,10 +83,15 @@ QCBORError encode_telemetry_data(struct pyrinas_cloud_telemetry_data *p_data, ui
 
     /* Create over-arching map */
     QCBOREncode_OpenMap(&ec);
-    QCBOREncode_AddSZStringToMapN(&ec, tel_type_version, p_data->version);
+
+    /*Add versio if it's there*/
+    if (p_data->has_version)
+    {
+        QCBOREncode_AddSZStringToMapN(&ec, tel_type_version, p_data->version);
+    }
 
     /* Add RSRP if valid*/
-    if (p_data->rsrp <= RSRP_THRESHOLD)
+    if (p_data->has_rsrp)
     {
         QCBOREncode_AddUInt64ToMapN(&ec, tel_type_rsrp, p_data->rsrp);
     }

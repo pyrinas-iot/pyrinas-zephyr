@@ -48,6 +48,7 @@ enum pryinas_cloud_state
 
 struct pyrinas_cloud_telemetry_data
 {
+  bool has_version;
   char version[24];
   bool has_rsrp;
   char rsrp;
