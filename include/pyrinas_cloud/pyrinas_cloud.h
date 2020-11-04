@@ -75,7 +75,7 @@ typedef struct
 } pryinas_cloud_application_cb_entry_t;
 
 /* Init MQTT Client */
-void pyrinas_cloud_init();
+void pyrinas_cloud_init(struct k_work_q *task_q, pyrinas_cloud_ota_state_evt_t cb);
 
 void pyrinas_cloud_test();
 

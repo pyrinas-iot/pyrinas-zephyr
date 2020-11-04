@@ -1,2 +1,3 @@
 rsource "pyrinas_cloud/Kconfig"
 rsource "cellular/Kconfig"
+rsource "worker/Kconfig"

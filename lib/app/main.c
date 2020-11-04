@@ -17,6 +17,7 @@
 #include <modem/at_notif.h>
 #include <dfu/mcuboot.h>
 #include <app/app.h>
+#include <worker/worker.h>
 
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 #include <bsd.h>
@@ -36,6 +37,16 @@ LOG_MODULE_REGISTER(main);
 struct device *gpio;
 
 static K_SEM_DEFINE(main_thread_proceed_sem, 0, 1);
+
+/* Delayed work for countdown */
+/* Callback data */
+static struct gpio_callback button_cb_data;
+static struct k_work button_work;
+
+/* Stack definition for application workqueue */
+K_THREAD_STACK_DEFINE(main_tasks_stack_area,
+											CONFIG_APPLICATION_WORKQUEUE_STACK_SIZE);
+static struct k_work_q main_tasks_q;
 
 #if defined(CONFIG_FILE_SYSTEM_LITTLEFS)
 #include <fs/fs.h>
@@ -169,8 +180,7 @@ static void cloud_state_callback(enum pryinas_cloud_state state)
 	{
 	case cloud_state_disconnected:
 		LOG_WRN("Disconnected!");
-		/*Reconnect*/
-		k_delayed_work_submit(&reconnect_work, K_SECONDS(2));
+		k_delayed_work_submit_to_queue(&main_tasks_q, &reconnect_work, K_SECONDS(2));
 		break;
 
 	case cloud_state_connected:
@@ -181,16 +191,28 @@ static void cloud_state_callback(enum pryinas_cloud_state state)
 
 void reconnect_work_fn(struct k_work *item)
 {
+	LOG_INF("Reconnect work");
+
 	int err = pyrinas_cloud_connect();
 	if (err && err != EINPROGRESS)
 	{
 		LOG_WRN("Unable to re-connect. Err: %d", err);
-		k_delayed_work_submit(&reconnect_work, K_SECONDS(30));
+		k_delayed_work_submit_to_queue(&main_tasks_q, &reconnect_work, K_SECONDS(10));
+	}
+}
 	}
 }
 
 void main(void)
 {
+
+	/* Application side work queue */
+	k_work_q_start(&main_tasks_q, main_tasks_stack_area,
+								 K_THREAD_STACK_SIZEOF(main_tasks_stack_area),
+								 CONFIG_APPLICATION_WORKQUEUE_PRIORITY);
+
+	/*Set worker to share*/
+	worker_init(&main_tasks_q);
 
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 	int err;
@@ -260,13 +282,14 @@ void main(void)
 	k_delayed_work_init(&reconnect_work, reconnect_work_fn);
 
 	/* Init Pyrinas Cloud */
-	pyrinas_cloud_init(pyrinas_cloud_ota_evt_handler);
+	pyrinas_cloud_init(&main_tasks_q, pyrinas_cloud_ota_evt_handler);
 
 	/* Callback time*/
 	pyrinas_cloud_register_state_evt(cloud_state_callback);
 
 	/* Connect */
-	pyrinas_cloud_connect();
+	__ASSERT(pyrinas_cloud_connect() == 0, "Unable to connect to MQTT. Restarting..");
+
 #endif
 
 	/* Wait for ready */

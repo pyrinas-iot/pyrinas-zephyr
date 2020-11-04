@@ -66,14 +66,19 @@ static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
 /* File descriptor */
 static struct pollfd fds;
 
+/* Queue */
+static struct k_work_q *main_tasks_q;
+
 /* Structures for work */
 static struct k_work publish_telemetry_work;
 static struct k_work ota_request_work;
-static struct k_work ota_reboot_work;
 static struct k_work ota_done_work;
 static struct k_work on_connect_work;
 static struct k_delayed_work ota_check_subscribed_work;
 static struct k_delayed_work fota_work;
+
+/* Used in system */
+static struct k_work ota_reboot_work;
 
 /* Thread id */
 static k_tid_t pyrinas_cloud_thread_id;
@@ -211,7 +216,11 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     // data_print("Publishing: ", data, data_len);
     LOG_INF("Publishing %d bytes to topic: %s len: %u", data_len, topic, topic_len);
 
-    return mqtt_publish(&client, &param);
+    k_sched_lock();
+    int err = mqtt_publish(&client, &param);
+    k_sched_unlock();
+
+    return err;
 }
 
 /**@brief Function to unsubscribe to the configured topic
@@ -356,7 +365,7 @@ static void telemetry_check_event(struct k_timer *timer)
 {
 
     /* Publish from work queue or else hard fault */
-    k_work_submit(&publish_telemetry_work);
+    k_work_submit_to_queue(main_tasks_q, &publish_telemetry_work);
 
     /* Restart timer */
     k_timer_start(&telemetry_timer, TELEMETRY_INTERVAL, K_NO_WAIT);
@@ -380,7 +389,7 @@ static void on_connect_fn(struct k_work *unused)
         subscribe(ota_sub_topic, strlen(ota_sub_topic), ota_sub_message_id);
 
         /* Delay work to make sure we are *at least* subscribed to OTA*/
-        k_delayed_work_submit(&ota_check_subscribed_work, K_SECONDS(30));
+        k_delayed_work_submit_to_queue(main_tasks_q, &ota_check_subscribed_work, K_SECONDS(30));
     }
 }
 
@@ -484,7 +493,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                     ota_state_callback(ota_state_s);
 
                 /* Start upgrade here*/
-                k_delayed_work_submit(&fota_work, K_SECONDS(5));
+                k_delayed_work_submit_to_queue(main_tasks_q, &fota_work, K_SECONDS(5));
 
                 /* Puase thread */
                 k_thread_suspend(pyrinas_cloud_thread_id);
@@ -505,7 +514,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 atomic_set(&startup_complete_s, 1);
 
                 /* Let the backend know we're done */
-                k_work_submit(&ota_done_work);
+                k_work_submit_to_queue(main_tasks_q, &ota_done_work);
 
                 /* Subscribe to Application topic */
                 subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
@@ -564,10 +573,8 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
 
         LOG_INF("MQTT client connected!");
 
-        // TODO: process state callack
-
         /* On connect work */
-        k_work_submit(&on_connect_work);
+        k_work_submit_to_queue(main_tasks_q, &on_connect_work);
 
         /*Start telemetry timer every TELEMETRY_INTERVAL */
         k_timer_start(&telemetry_timer, TELEMETRY_INTERVAL, K_NO_WAIT);
@@ -656,7 +663,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             atomic_set(&initial_ota_check, 1);
 
             /* Submit work */
-            k_work_submit(&ota_request_work);
+            k_work_submit_to_queue(main_tasks_q, &ota_request_work);
         }
 
         break;
@@ -680,10 +687,7 @@ static int broker_init(void)
 
     err = getaddrinfo(CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME, NULL, &hints, &result);
     if (err)
-    {
-        printk("ERROR: getaddrinfo failed %d\n", err);
         return err;
-    }
 
     addr = result;
     err = -ENOENT;
@@ -768,18 +772,16 @@ static void work_init()
 
 /**@brief Initialize the MQTT client structure
  */
-static void client_init(struct mqtt_client *client, char *p_client_id, size_t client_id_sz)
+static int client_init(struct mqtt_client *client, char *p_client_id, size_t client_id_sz)
 {
 
     int err;
 
-    /* Initialize workers */
-    work_init();
-
     mqtt_client_init(client);
 
     err = broker_init();
-    assert(err == 0);
+    if (err != 0)
+        return err;
 
     /* MQTT client configuration */
     client->broker = &broker;
@@ -806,6 +808,8 @@ static void client_init(struct mqtt_client *client, char *p_client_id, size_t cl
     tls_config->sec_tag_count = ARRAY_SIZE(sec_tag_list);
     tls_config->sec_tag_list = sec_tag_list;
     tls_config->hostname = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME;
+
+    return 0;
 }
 
 #ifdef CONFIG_FOTA_DOWNLOAD
@@ -857,6 +861,17 @@ int pyrinas_cloud_connect()
     if (atomic_get(&cloud_state_s) == cloud_state_connected)
         return -EINPROGRESS;
 
+    /* Get the IMEI */
+    get_imei(imei, sizeof(imei));
+
+    /* MQTT client create */
+    err = client_init(&client, imei, sizeof(imei));
+    if (err != 0)
+    {
+        LOG_ERR("client_init %d", err);
+        return err;
+    }
+
     /* Connect to MQTT */
     err = mqtt_connect(&client);
     if (err != 0)
@@ -901,8 +916,14 @@ int pyrinas_cloud_disconnect()
     return 0;
 }
 
-void pyrinas_cloud_init(pyrinas_cloud_ota_state_evt_t cb)
+void pyrinas_cloud_init(struct k_work_q *task_q, pyrinas_cloud_ota_state_evt_t cb)
 {
+    /* Error if queue is not attached */
+    __ASSERT(task_q != NULL, "Task queue must not be NULL.");
+
+    /*Set the task queue*/
+    main_tasks_q = task_q;
+
     /*Set the callback*/
     ota_state_callback = cb;
 
@@ -923,8 +944,8 @@ void pyrinas_cloud_init(pyrinas_cloud_ota_state_evt_t cb)
     snprintf(telemetry_pub_topic, sizeof(telemetry_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC, IMEI_LEN, imei);
     snprintf(application_sub_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, IMEI_LEN, imei, 1, "+");
 
-    /* MQTT client create */
-    client_init(&client, imei, sizeof(imei));
+    /* Initialize workers */
+    work_init();
 }
 
 int pyrinas_cloud_publish_w_uid(char *uid, char *type, uint8_t *data, size_t len)
@@ -938,13 +959,7 @@ int pyrinas_cloud_publish_w_uid(char *uid, char *type, uint8_t *data, size_t len
              strlen(type), type);
 
     /* Publish the data */
-    int err = data_publish(topic, strlen(topic), data, len, sys_rand32_get());
-    if (err)
-    {
-        LOG_ERR("Unable to publish w/ UID. Error: %d", err);
-    }
-
-    return err;
+    return data_publish(topic, strlen(topic), data, len, sys_rand32_get());
 }
 
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
@@ -988,7 +1003,7 @@ void pyrinas_cloud_process()
             }
             else if ((err != 0) && (err != -EAGAIN))
             {
-                LOG_ERR("ERROR: mqtt_live %d\n", err);
+                LOG_ERR("ERROR: mqtt_live %d", err);
                 break;
             }
 
@@ -997,7 +1012,7 @@ void pyrinas_cloud_process()
                 err = mqtt_input(&client);
                 if (err != 0)
                 {
-                    LOG_ERR("ERROR: mqtt_input %d\n", err);
+                    LOG_ERR("ERROR: mqtt_input %d", err);
                     mqtt_abort(&client);
                     break;
                 }
@@ -1020,8 +1035,7 @@ void pyrinas_cloud_process()
     }
 }
 
-#define THREAD_STACK_SIZE KB(2)
-static K_THREAD_STACK_DEFINE(pyrinas_cloud_thread_stack, THREAD_STACK_SIZE);
+#define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(2)
+static K_THREAD_STACK_DEFINE(pyrinas_cloud_thread_stack, PYRINAS_CLOUD_THREAD_STACK_SIZE);
 K_THREAD_DEFINE(pyrinas_cloud_thread, K_THREAD_STACK_SIZEOF(pyrinas_cloud_thread_stack),
-                pyrinas_cloud_process, NULL, NULL, NULL,
-                K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+                pyrinas_cloud_process, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
