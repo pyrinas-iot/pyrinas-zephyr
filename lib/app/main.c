@@ -151,9 +151,7 @@ static void rtc_init()
 		LOG_ERR("Unable to set alarm");
 	}
 }
-#endif
 
-#ifdef CONFIG_PCF85063A
 static bool timer_flag = false;
 #endif
 

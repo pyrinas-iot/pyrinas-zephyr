@@ -216,9 +216,7 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     // data_print("Publishing: ", data, data_len);
     LOG_INF("Publishing %d bytes to topic: %s len: %u", data_len, topic, topic_len);
 
-    k_sched_lock();
     int err = mqtt_publish(&client, &param);
-    k_sched_unlock();
 
     return err;
 }
@@ -420,14 +418,14 @@ static void fota_start_fn(struct k_work *unused)
     int sec_tag = -1;
 
     /* Set the security tag if TLS is enabled. */
-#if defined(CONFIG_DOWNLOAD_CLIENT_TLS)
+#if defined(CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG)
     sec_tag = CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG;
 #endif
 
     LOG_DBG("%s/%s using tag %d\n", ota_data.host, ota_data.file, sec_tag);
 
     /* Start download uses default port and APN*/
-    err = fota_download_start(ota_data.host, ota_data.file, sec_tag, 0, NULL);
+    err = fota_download_start(ota_data.host, ota_data.file, sec_tag, NULL, 0);
     if (err)
     {
         LOG_ERR("fota_download_start error %d\n", err);
