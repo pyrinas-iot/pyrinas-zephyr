@@ -404,7 +404,10 @@ static void ota_check_subscribed_work_fn(struct k_work *unused)
 {
 
     /* Check if, after a certain amount of time, no response has been had. If no, assert and reboot*/
-    __ASSERT_NO_MSG(atomic_get(&initial_ota_check) == 1);
+    if (atomic_get(&ota_state_s) == ota_state_ready)
+    {
+        __ASSERT_NO_MSG(atomic_get(&initial_ota_check) == 1);
+    }
 }
 
 static void fota_start_fn(struct k_work *unused)
@@ -451,11 +454,11 @@ static void fota_start_fn(struct k_work *unused)
 
 static void publish_evt_handler(const char *topic, size_t topic_len, const char *data, size_t data_len)
 {
-    LOG_INF("topic: %s topic_len: %d data_len: %d", topic, topic_len, data_len);
 
     /* If its the OTA sub topic process */
-    if (strcmp(ota_sub_topic, topic) == 0)
+    if (strncmp(ota_sub_topic, topic, strlen(ota_sub_topic)) == 0)
     {
+        LOG_INF("Found %s", ota_sub_topic);
 
         /* Parse OTA event */
         int err = decode_ota_data(&ota_data, data, data_len);
@@ -482,6 +485,10 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 result = 1;
             }
         }
+        else
+        {
+            LOG_WRN("Unable to decode OTA data");
+        }
 
         /*If equal and force or if incoming is greater*/
         if (((result == 0 && ota_data.force) || result == 1))
@@ -490,7 +497,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             // Check startup flag. If not set do this
             if (atomic_get(&ota_state_s) == ota_state_ready && atomic_get(&startup_complete_s) == 0)
             {
-                LOG_DBG("Start upgrade\n");
+                LOG_INF("Start upgrade\n");
 
                 /* Set OTA State */
                 atomic_set(&ota_state_s, ota_state_started);
@@ -514,9 +521,13 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
         else
         {
 
+            LOG_INF("No update.");
+
             /* If there wasn't an issue with OTA, continue on our merry way*/
             if (atomic_get(&ota_state_s) == ota_state_ready)
             {
+                LOG_INF("Ota ready.");
+
                 /*Set the startup complete.*/
                 atomic_set(&startup_complete_s, 1);
 
