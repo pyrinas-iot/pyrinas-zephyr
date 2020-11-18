@@ -1,6 +1,7 @@
 #include <zephyr.h>
 #include <stdio.h>
 #include <drivers/uart.h>
+#include <device.h>
 #include <string.h>
 #include <modem/at_cmd.h>
 #include <random/rand32.h>
@@ -11,6 +12,7 @@
 #include <cellular/cellular.h>
 #include <net/fota_download.h>
 #include <power/reboot.h>
+#include <drivers/watchdog.h>
 #include <assert.h>
 
 #include "pyrinas_cloud_codec.h"
@@ -62,6 +64,7 @@ static atomic_val_t cloud_state_s = ATOMIC_INIT(cloud_state_disconnected);
 static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
 static atomic_val_t startup_complete_s = ATOMIC_INIT(0);
 static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
+static atomic_val_t wdt_started_s = ATOMIC_INIT(0);
 
 /* File descriptor */
 static struct pollfd fds;
@@ -95,6 +98,10 @@ static pyrinas_cloud_state_evt_t cloud_state_callback = NULL;
 
 /* Statically track message id*/
 static uint16_t ota_sub_message_id = 0;
+static int wdt_channel_id;
+
+/* WDT Device */
+const struct device *wdt_drv;
 
 /* Version string */
 static const char *version_string = STRINGIFY(PYRINAS_APP_VERSION);
@@ -114,7 +121,7 @@ int pyrinas_cloud_subscribe(char *topic, pyrinas_cloud_application_cb_t callback
     /* Get the string length */
     size_t topic_len = strlen(topic);
 
-    // Return if name is greater than name size
+    /* Return if name is greater than name size */
     if (topic_len > CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE)
     {
         return -EINVAL;
@@ -213,7 +220,6 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     param.dup_flag = 0;
     param.retain_flag = 0;
 
-    // data_print("Publishing: ", data, data_len);
     LOG_INF("Publishing %d bytes to topic: %s len: %u", data_len, topic, topic_len);
 
     int err = mqtt_publish(&client, &param);
@@ -319,6 +325,7 @@ static void publish_ota_done()
     }
 }
 
+/* Publish central/hub telemetry */
 static void publish_telemetry(bool has_version)
 {
 
@@ -341,12 +348,12 @@ static void publish_telemetry(bool has_version)
 
     LOG_INF("RSRP %d %i", data.has_rsrp, data.rsrp);
 
-    // Copy over version string
+    /* Copy over version string */
     data.has_version = has_version;
     if (has_version)
         strncpy(data.version, version_string, sizeof(data.version));
 
-    // Encode data
+    /* Encode data */
     err = encode_telemetry_data(&data, buf, sizeof(buf), &payload_len);
     if (err)
     {
@@ -354,7 +361,7 @@ static void publish_telemetry(bool has_version)
         return;
     }
 
-    // Publish telemetry
+    /* Publish telemetry */
     err = data_publish(telemetry_pub_topic, strlen(telemetry_pub_topic), buf, payload_len, sys_rand32_get());
     if (err)
     {
@@ -494,7 +501,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
         if (((result == 0 && ota_data.force) || result == 1))
         {
 
-            // Check startup flag. If not set do this
+            /* Check startup flag. If not set do this */
             if (atomic_get(&ota_state_s) == ota_state_ready && atomic_get(&startup_complete_s) == 0)
             {
                 LOG_INF("Start upgrade\n");
@@ -514,7 +521,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             }
             else
             {
-                //If startup flag is is set, reboot.
+                /*If startup flag is is set, reboot.*/
                 sys_reboot(SYS_REBOOT_WARM);
             }
         }
@@ -625,7 +632,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         err = publish_get_payload(c, payload_buf, p->message.payload.len);
         if (err >= 0)
         {
-            // Handle the event
+            /* Handle the event */
             publish_evt_handler(p->message.topic.topic.utf8, p->message.topic.topic.size, payload_buf, p->message.payload.len);
         }
         else
@@ -640,7 +647,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             }
         }
 
-        // Need to ACK recieved data...
+        /* Need to ACK recieved data... */
         if (p->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE)
         {
 
@@ -939,6 +946,24 @@ void pyrinas_cloud_init(struct k_work_q *task_q, pyrinas_cloud_ota_state_evt_t c
     /* Error if queue is not attached */
     __ASSERT(task_q != NULL, "Task queue must not be NULL.");
 
+    /* Set the watchdog device */
+    wdt_drv = device_get_binding(DT_LABEL(DT_NODELABEL(wdt)));
+    __ASSERT(wdt_drv != NULL, "WDT not found in device defintion.");
+
+    /* Watchdog! */
+    const struct wdt_timeout_cfg wdt_settings = {
+        .window = {
+            .min = 0,
+            .max = 60000,
+        },
+        .callback = NULL,
+        .flags = WDT_FLAG_RESET_SOC};
+
+    /* Install WDT timeout*/
+    wdt_channel_id = wdt_install_timeout(
+        wdt_drv, &wdt_settings);
+    __ASSERT(wdt_channel_id >= 0, "WDT cannot be initialized.");
+
     /*Set the task queue*/
     main_tasks_q = task_q;
 
@@ -966,24 +991,97 @@ void pyrinas_cloud_init(struct k_work_q *task_q, pyrinas_cloud_ota_state_evt_t c
     work_init();
 }
 
-int pyrinas_cloud_publish_w_uid(char *uid, char *type, uint8_t *data, size_t len)
+static int pyrinas_cloud_publish_telemetry_evt(pyrinas_event_t *evt)
 {
 
     char topic[256];
+    char uid[14];
+    char buf[64];
+    size_t payload_len = 0;
+    int err = 0;
 
+    struct pyrinas_cloud_telemetry_data data;
+
+    /* Check if central RSSI */
+    if (evt->central_rssi < 0)
+    {
+        data.has_central_rssi = true;
+        data.central_rssi = evt->central_rssi;
+    }
+
+    /* Check if peripheral RSSI */
+    if (evt->peripheral_rssi < 0)
+    {
+        data.has_peripheral_rssi = true;
+        data.peripheral_rssi = evt->peripheral_rssi;
+    }
+
+    LOG_DBG("Rssi: %i %i", data.central_rssi, data.peripheral_rssi);
+
+    /* Encode data */
+    err = encode_telemetry_data(&data, buf, sizeof(buf), &payload_len);
+    if (err)
+    {
+        LOG_ERR("Unable to encode telemetry data.");
+        return err;
+    }
+
+    /* Get peripheral address */
+    snprintf(uid, sizeof(uid), "%02x%02x%02x%02x%02x%02x",
+             evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
+             evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
+
+    /* Create topic */
+    snprintf(topic, sizeof(topic),
+             CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC,
+             strlen(uid), uid);
+
+    /* Publish the data */
+    return data_publish(topic, strlen(topic), buf, payload_len, sys_rand32_get());
+}
+
+int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
+{
+    char topic[256];
+    char uid[14];
+    int err;
+
+    /* Get peripheral address */
+    snprintf(uid, sizeof(uid), "%02x%02x%02x%02x%02x%02x",
+             evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
+             evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
+
+    LOG_INF("Sending to: %s.", evt->name.bytes);
+
+    /* Create topic */
     snprintf(topic, sizeof(topic),
              CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
              strlen(uid), uid,
-             strlen(type), type);
+             evt->name.size, evt->name.bytes);
 
     /* Publish the data */
-    return data_publish(topic, strlen(topic), data, len, sys_rand32_get());
+    err = data_publish(topic, strlen(topic), evt->data.bytes, evt->data.size, sys_rand32_get());
+    if (err)
+    {
+        LOG_WRN("Unable to publish. Err: %i", err);
+    }
+
+    /* Publish telemetry */
+    return pyrinas_cloud_publish_telemetry_evt(evt);
 }
 
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
 {
+    char topic[256];
 
-    return pyrinas_cloud_publish_w_uid(imei, type, data, len);
+    /* Create topic */
+    snprintf(topic, sizeof(topic),
+             CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
+             sizeof(imei), imei,
+             strlen(type), type);
+
+    /* Publish the data */
+    return data_publish(topic, strlen(topic), data, len, sys_rand32_get());
 }
 
 void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb)
@@ -1000,11 +1098,35 @@ void pyrinas_cloud_process()
 
     while (true)
     {
+
         /* Don't go any further until MQTT is connected */
-        k_sem_take(&pyrinas_cloud_thread_sem, K_FOREVER);
+        err = k_sem_take(&pyrinas_cloud_thread_sem, K_SECONDS(55));
+        if (err)
+        {
+            /* Touch the WDT */
+            if (atomic_get(&wdt_started_s))
+                wdt_feed(wdt_drv, wdt_channel_id);
+
+            /* If timeout continue*/
+            continue;
+        }
+
+        /* Only start if it hasn't been already */
+        if (atomic_get(&wdt_started_s) == 0)
+        {
+            /* Bring up WDT after enabling */
+            err = wdt_setup(wdt_drv, 0);
+            if (err)
+                LOG_ERR("WDT setup error. Error: %i", err);
+
+            atomic_set(&wdt_started_s, 1);
+        }
 
         while (atomic_get(&cloud_state_s) == cloud_state_connected)
         {
+
+            /* Touch the WDT */
+            wdt_feed(wdt_drv, wdt_channel_id);
 
             /* Then process MQTT */
             err = poll(&fds, 1, mqtt_keepalive_time_left(&client));

@@ -96,6 +96,18 @@ QCBORError encode_telemetry_data(struct pyrinas_cloud_telemetry_data *p_data, ui
         QCBOREncode_AddUInt64ToMapN(&ec, tel_type_rsrp, p_data->rsrp);
     }
 
+    /* Add Hub RSSI if valid*/
+    if (p_data->has_central_rssi)
+    {
+        QCBOREncode_AddInt64ToMapN(&ec, tel_type_rssi_central, p_data->central_rssi);
+    }
+
+    /* Add Cabinet RSSI if valid*/
+    if (p_data->has_peripheral_rssi)
+    {
+        QCBOREncode_AddInt64ToMapN(&ec, tel_type_rssi_peripheral, p_data->peripheral_rssi);
+    }
+
     QCBOREncode_CloseMap(&ec);
 
     /* Finish and get size */

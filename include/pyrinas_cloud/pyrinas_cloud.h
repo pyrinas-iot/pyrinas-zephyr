@@ -2,6 +2,8 @@
 #ifndef _PYRINAS_CLOUD_H
 #define _PYRINAS_CLOUD_H
 
+#include "pyrinas_codec.h"
+
 /* Defines */
 #define IMEI_LEN 15
 
@@ -10,8 +12,8 @@ enum pyrinas_cloud_telemetry_type
 {
   tel_type_version,
   tel_type_rsrp,
-  tel_type_rssi_hub,    /* Bluetooth RSSI at hub */
-  tel_type_rssi_client, /* Bluetooth RSSI at client */
+  tel_type_rssi_central,    /* Bluetooth RSSI at central */
+  tel_type_rssi_peripheral, /* Bluetooth RSSI at client */
 };
 
 /* Used to encode and decode ota related keys */
@@ -52,6 +54,10 @@ struct pyrinas_cloud_telemetry_data
   char version[24];
   bool has_rsrp;
   char rsrp;
+  bool has_central_rssi;
+  int8_t central_rssi;
+  bool has_peripheral_rssi;
+  int8_t peripheral_rssi;
 };
 
 struct pyrinas_cloud_ota_data
@@ -97,19 +103,16 @@ int pyrinas_cloud_register_uid(char *uid);
 /* Unregister client device */
 int pyrinas_cloud_unregister_uid(char *uid);
 
-/* Subscribe and listen for hub specific application events */
+/* Subscribe and listen for central specific application events */
 int pyrinas_cloud_subscribe(char *name, pyrinas_cloud_application_cb_t callback);
 
 /* Unsubscribe from event */
 int pyrinas_cloud_unsubscribe(char *name);
 
-/* Publish hub event to the cloud */
+/* Publish typed Pyrinas event */
+int pyrinas_cloud_publish_evt(pyrinas_event_t *evt);
+
+/* Publish central event to the cloud */
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len);
-
-/* Publish UID specific application event to the cloud */
-int pyrinas_cloud_publish_w_uid(char *uid, char *type, uint8_t *data, size_t len);
-
-/* Subscribe and listen for uid specific application events */
-int pyrinas_cloud_subscribe_w_uid();
 
 #endif /* _PYRINAS_CLOUD_H */
