@@ -143,7 +143,7 @@ static void uart_callback(const struct device *uart, struct uart_event *evt, voi
   {
     uint8_t *buf;
 
-    LOG_INF("Buf request");
+    LOG_DBG("Buf request");
 
     err = k_mem_slab_alloc(&uart_slab, (void **)&buf, K_NO_WAIT);
     __ASSERT(err == 0, "Failed to allocate slab");
@@ -154,7 +154,7 @@ static void uart_callback(const struct device *uart, struct uart_event *evt, voi
   }
 
   case UART_RX_BUF_RELEASED:
-    LOG_INF("Buf release");
+    LOG_DBG("Buf release");
     k_mem_slab_free(&uart_slab, (void **)&evt->data.rx_buf.buf);
     break;
 
@@ -220,7 +220,7 @@ int comms_write(const uint8_t *buf, size_t len)
 void comms_rx_thread(void)
 {
 
-  LOG_INF("comms_rx_thread");
+  LOG_DBG("comms_rx_thread");
 
   /* Init tx ringbuf */
   ring_buf_init(
