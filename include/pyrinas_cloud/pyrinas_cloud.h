@@ -2,7 +2,8 @@
 #ifndef _PYRINAS_CLOUD_H
 #define _PYRINAS_CLOUD_H
 
-#include "pyrinas_codec.h"
+#include <zephyr.h>
+#include <pyrinas_codec.h>
 
 /* Defines */
 #define IMEI_LEN 15
@@ -60,9 +61,22 @@ struct pyrinas_cloud_telemetry_data
   int8_t peripheral_rssi;
 };
 
+union pyrinas_cloud_ota_version
+{
+  struct
+  {
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
+    uint8_t commit;
+    uint8_t hash[8];
+  };
+  uint8_t raw[12];
+};
+
 struct pyrinas_cloud_ota_data
 {
-  char version[18];
+  union pyrinas_cloud_ota_version version;
   char host[128];
   char file[128];
   bool force;

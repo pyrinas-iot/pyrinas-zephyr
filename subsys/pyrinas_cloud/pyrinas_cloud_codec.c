@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <pyrinas_cloud/pyrinas_cloud.h>
 #include <cellular/cellular.h>
+#include <qcbor/qcbor_spiffy_decode.h>
 
 #include "pyrinas_cloud_codec.h"
 
@@ -27,49 +28,115 @@ QCBORError encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t 
     return QCBOREncode_FinishGetSize(&ec, payload_len);
 }
 
-int decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, size_t data_len)
+void decode_ota_version(union pyrinas_cloud_ota_version *p_version, QCBORDecodeContext *dc, int64_t label)
 {
 
+    QCBORDecode_EnterMapFromMapN(dc, label);
+    uint64_t temp;
+
+    QCBORDecode_GetUInt64ConvertAllInMapN(dc, major_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    p_version->major = temp;
+    LOG_DBG("%d", (uint8_t)temp);
+
+    QCBORDecode_GetUInt64ConvertAllInMapN(dc, minor_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    p_version->minor = temp;
+    LOG_DBG("%d", (uint8_t)temp);
+
+    QCBORDecode_GetUInt64ConvertAllInMapN(dc, patch_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    p_version->patch = temp;
+    LOG_DBG("%d", (uint8_t)temp);
+
+    QCBORDecode_GetUInt64ConvertAllInMapN(dc, commit_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    p_version->commit = temp;
+    LOG_DBG("%d", (uint8_t)temp);
+
+    /* Get the hash from array */
+    QCBORDecode_EnterArrayFromMapN(dc, hash_pos);
+    for (int64_t i = 0; i < sizeof(p_version->hash); i++)
+    {
+        QCBORDecode_GetUInt64(dc, &temp);
+        p_version->hash[i] = temp;
+    }
+    QCBORDecode_ExitArray(dc);
+
+    uint8_t buf[64];
+    snprintf(buf, sizeof(buf), "%d.%d.%d-%d-%.*s", p_version->major, p_version->minor, p_version->patch, p_version->commit, sizeof(p_version->hash), p_version->hash);
+    LOG_INF("Version: %s", buf);
+
+    QCBORDecode_ExitMap(dc);
+}
+
+QCBORError decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, size_t data_len)
+{
     /* Setup of the goods */
+    QCBORError uErr;
     UsefulBufC buf = {
         .ptr = data,
         .len = data_len};
     QCBORDecodeContext dc;
-    QCBORItem item;
     QCBORDecode_Init(&dc, buf, QCBOR_DECODE_MODE_NORMAL);
+    QCBORDecode_EnterMap(&dc, NULL);
 
-    QCBORDecode_GetNext(&dc, &item);
-    if (item.uDataType != QCBOR_TYPE_MAP)
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
     {
-        LOG_WRN("Expected CBOR map structure.");
-        return -ENOEXEC;
+        goto Done;
     }
 
-    /* Get the version */
-    QCBORDecode_GetNext(&dc, &item);
-    if (item.val.string.len > sizeof(ota_data->version))
-        return -ENOEXEC;
-    memcpy(ota_data->version, item.val.string.ptr, item.val.string.len);
+    /* Get the ota version struct */
+    decode_ota_version(&ota_data->version, &dc, version_pos);
+
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
 
     /* Get the host */
-    QCBORDecode_GetNext(&dc, &item);
-    if (item.val.string.len > sizeof(ota_data->host))
-        return -ENOEXEC;
-    memcpy(ota_data->host, item.val.string.ptr, item.val.string.len);
+    UsefulBufC host_data;
+    QCBORDecode_GetTextStringInMapN(&dc, host_pos, &host_data);
+    memcpy(ota_data->host, host_data.ptr, host_data.len);
+
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
 
     /* Get the file */
-    QCBORDecode_GetNext(&dc, &item);
-    if (item.val.string.len > sizeof(ota_data->file))
-        return -ENOEXEC;
-    memcpy(ota_data->file, item.val.string.ptr, item.val.string.len);
+    UsefulBufC file_data;
+    QCBORDecode_GetTextStringInMapN(&dc, file_pos, &file_data);
+    memcpy(ota_data->file, file_data.ptr, file_data.len);
+
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
 
     /* Get the force value */
-    QCBORDecode_GetNext(&dc, &item);
-    ota_data->force = item.uDataType == QCBOR_TYPE_TRUE;
+    QCBORDecode_GetBoolInMapN(&dc, force_pos, &ota_data->force);
 
-    printk("version:%s, url:%s/%s, force:%d\n", ota_data->version, ota_data->host, ota_data->file, ota_data->force);
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
 
-    return 0;
+    LOG_INF("URL: %s%s", ota_data->host, ota_data->file);
+    LOG_INF("Force: %d", ota_data->force);
+
+    /* Exit main map and return*/
+    QCBORDecode_ExitMap(&dc);
+
+Done:
+
+    return QCBORDecode_Finish(&dc);
 }
 
 QCBORError encode_telemetry_data(struct pyrinas_cloud_telemetry_data *p_data, uint8_t *p_buf, size_t data_len, size_t *payload_len)

@@ -14,6 +14,7 @@
 #include <power/reboot.h>
 #include <drivers/watchdog.h>
 #include <assert.h>
+#include <app/version.h>
 
 #include "pyrinas_cloud_codec.h"
 #include "pyrinas_cloud_helper.h"
@@ -48,7 +49,6 @@ char ota_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC) + IMEI_LEN];
 char ota_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC) + IMEI_LEN];
 char telemetry_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC) + IMEI_LEN];
 char application_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + IMEI_LEN + CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE];
-// TODO: config topic -- used for adding/removing bluetooth clients
 
 /* The mqtt client struct */
 static struct mqtt_client client;
@@ -62,7 +62,6 @@ static K_SEM_DEFINE(pyrinas_cloud_thread_sem, 0, 1);
 /* Atomic flags */
 static atomic_val_t cloud_state_s = ATOMIC_INIT(cloud_state_disconnected);
 static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
-static atomic_val_t startup_complete_s = ATOMIC_INIT(0);
 static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
 static atomic_val_t wdt_started_s = ATOMIC_INIT(0);
 
@@ -102,9 +101,6 @@ static int wdt_channel_id;
 
 /* WDT Device */
 const struct device *wdt_drv;
-
-/* Version string */
-static const char *version_string = STRINGIFY(PYRINAS_APP_VERSION);
 
 #if defined(CONFIG_BSD_LIBRARY)
 
@@ -351,7 +347,7 @@ static void publish_telemetry(bool has_version)
     /* Copy over version string */
     data.has_version = has_version;
     if (has_version)
-        strncpy(data.version, version_string, sizeof(data.version));
+        get_version_string(data.version, sizeof(data.version));
 
     /* Encode data */
     err = encode_telemetry_data(&data, buf, sizeof(buf), &payload_len);
@@ -461,69 +457,48 @@ static void fota_start_fn(struct k_work *unused)
 
 static void publish_evt_handler(const char *topic, size_t topic_len, const char *data, size_t data_len)
 {
+    int result = 0;
 
     /* If its the OTA sub topic process */
     if (strncmp(ota_sub_topic, topic, strlen(ota_sub_topic)) == 0)
     {
-        LOG_INF("Found %s", ota_sub_topic);
+        LOG_INF("Found %s. Data size: %d", ota_sub_topic, data_len);
 
         /* Parse OTA event */
         int err = decode_ota_data(&ota_data, data, data_len);
 
         /* If error then no update available */
-        int result = 0;
         if (err == 0)
         {
 
-            union pyrinas_cloud_version current, incoming;
+            /* Check numeric */
+            result = ver_comp(&pyrinas_version, &ota_data.version);
 
-            /* Compare incoming version with current version */
-            ver_from_str(&current, STRINGIFY(PYRINAS_APP_VERSION));
-            ver_from_str(&incoming, ota_data.version);
-
-            /*Check numeric*/
-            result = ver_comp(&current, &incoming);
-
-            LOG_INF("Version check %s vs %s = %d", STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, result);
-
-            /* If the strings are not equal do stuff*/
-            if (result == 0 && strncmp(STRINGIFY(PYRINAS_APP_VERSION), ota_data.version, sizeof(ota_data.version)) != 0)
-            {
-                result = 1;
-            }
+            /* Print result */
+            LOG_INF("New version? %s ", result == 1 ? "true" : "false");
         }
         else
         {
             LOG_WRN("Unable to decode OTA data");
         }
 
-        /*If equal and force or if incoming is greater*/
-        if (((result == 0 && ota_data.force) || result == 1))
+        /* If incoming is greater or hash is not equal */
+        if (result == 1)
         {
 
-            /* Check startup flag. If not set do this */
-            if (atomic_get(&ota_state_s) == ota_state_ready && atomic_get(&startup_complete_s) == 0)
+            LOG_INF("Start upgrade");
+
+            /* Set OTA State */
+            atomic_set(&ota_state_s, ota_state_started);
+
+            /* Send to calback */
+            if (ota_state_callback)
             {
-                LOG_INF("Start upgrade\n");
-
-                /* Set OTA State */
-                atomic_set(&ota_state_s, ota_state_started);
-
-                /* Send to calback */
-                if (ota_state_callback)
-                    ota_state_callback(ota_state_s);
-
-                /* Start upgrade here*/
-                k_delayed_work_submit_to_queue(main_tasks_q, &fota_work, K_SECONDS(5));
-
-                /* Puase thread */
-                k_thread_suspend(pyrinas_cloud_thread_id);
+                ota_state_callback(ota_state_s);
             }
-            else
-            {
-                /*If startup flag is is set, reboot.*/
-                sys_reboot(SYS_REBOOT_WARM);
-            }
+
+            /* Start upgrade here*/
+            k_delayed_work_submit_to_queue(main_tasks_q, &fota_work, K_SECONDS(5));
         }
         else
         {
@@ -534,9 +509,6 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             if (atomic_get(&ota_state_s) == ota_state_ready)
             {
                 LOG_INF("Ota ready.");
-
-                /*Set the startup complete.*/
-                atomic_set(&startup_complete_s, 1);
 
                 /* Let the backend know we're done */
                 k_work_submit_to_queue(main_tasks_q, &ota_done_work);
@@ -1051,7 +1023,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
              evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
              evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
 
-    LOG_INF("Sending to: %s.", evt->name.bytes);
+    LOG_DBG("Sending to: %s.", evt->name.bytes);
 
     /* Create topic */
     snprintf(topic, sizeof(topic),

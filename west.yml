@@ -15,7 +15,7 @@ manifest:
       import: true
     - name: qcbor
       repo-path: QCBOR
-      revision: 2db2661d498657729a9aec27d96da14d5345808a
+      revision: 1fa579b5cd28a623e02cce24685e21ef5e45164c
       path: pyrinas/ext/qcbor
       remote: qcbor
     - name: pyrinas-codec

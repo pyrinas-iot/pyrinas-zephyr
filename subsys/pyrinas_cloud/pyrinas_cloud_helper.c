@@ -10,43 +10,22 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(pyrinas_cloud_helper);
 
-/* Gathers the numeric represnation of a string version*/
-// TODO: get these stupid ver_from_string working
-void ver_from_str(union pyrinas_cloud_version *ver, char *ver_str)
-{
-  size_t first_period = strcspn(ver_str, ".");
-  size_t second_period = strcspn(ver_str + first_period + 1, ".") + first_period + 1;
-
-  char *start_ptr = ver_str;
-  char *end_ptr = ver_str + first_period - 1;
-
-  ver->major = strtoul(start_ptr, &end_ptr, 10);
-  LOG_DBG("ver: %d ", ver->major);
-
-  start_ptr = ver_str + first_period + 1;
-  end_ptr = ver_str + second_period - 1;
-
-  ver->minor = strtoul(start_ptr, &end_ptr, 10);
-  LOG_DBG("%d ", ver->minor);
-
-  start_ptr = ver_str + second_period + 1;
-  end_ptr = ver_str + strlen(ver_str) - 1;
-
-  ver->patch = strtoul(start_ptr, &end_ptr, 10);
-  LOG_DBG("%d\n", ver->patch);
-}
+/* Number of entries in version struct*/
+#define VER_ENTIRES 4
 
 /* Returns -1 if first is greater, 0 if equal, 1 if second is greater */
-int ver_comp(union pyrinas_cloud_version *first, union pyrinas_cloud_version *second)
+int ver_comp(const union pyrinas_cloud_ota_version *first, const union pyrinas_cloud_ota_version *second)
 {
 
-  for (int i = sizeof(first->all) - 1; i >= 0; i--)
+  /* First check version numbers */
+  for (int i = 0; i < VER_ENTIRES; i++)
+  {
 
-    if (first->all[i] > second->all[i])
+    if (first->raw[i] > second->raw[i])
     {
       return -1;
     }
-    else if (first->all[i] == second->all[i])
+    else if (first->raw[i] == second->raw[i])
     {
       continue;
     }
@@ -54,6 +33,16 @@ int ver_comp(union pyrinas_cloud_version *first, union pyrinas_cloud_version *se
     {
       return 1;
     }
+  }
 
-  return 0;
+  /* Then compare hashes. Not equal if hashes are not equal. */
+  int ret = memcmp(&first->hash, &second->hash, sizeof(first->hash));
+  if (ret != 0)
+  {
+    return 1;
+  }
+  else
+  {
+    return 0;
+  }
 }

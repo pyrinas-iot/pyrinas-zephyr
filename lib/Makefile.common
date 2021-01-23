@@ -29,6 +29,13 @@ load: build
 	@newtmgr -c $(DEFAULT_MCUMGR_TARGET) image upload build/zephyr/app_update.bin
 	@newtmgr -c $(DEFAULT_MCUMGR_TARGET) reset
 
+.PHONY: ota
+ota: build
+	@echo "Building and organizing for OTA"
+	@mkdir -p _ota 
+	@mv manifest.json _ota/
+	@cp build/zephyr/app_update.bin _ota/
+
 .PHONY:reset
 reset:
 	newtmgr -c $(DEFAULT_MCUMGR_TARGET) reset
