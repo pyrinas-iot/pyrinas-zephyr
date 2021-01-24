@@ -78,7 +78,6 @@ static struct k_work ota_done_work;
 static struct k_work on_connect_work;
 static struct k_delayed_work ota_check_subscribed_work;
 static struct k_delayed_work fota_work;
-
 /* Used in system */
 static struct k_work ota_reboot_work;
 
@@ -397,9 +396,6 @@ static void on_connect_fn(struct k_work *unused)
 
         /* Subscribe to OTA topic */
         subscribe(ota_sub_topic, strlen(ota_sub_topic), ota_sub_message_id);
-
-        /* Delay work to make sure we are *at least* subscribed to OTA*/
-        k_delayed_work_submit_to_queue(main_tasks_q, &ota_check_subscribed_work, K_SECONDS(30));
     }
 }
 
@@ -407,10 +403,7 @@ static void ota_check_subscribed_work_fn(struct k_work *unused)
 {
 
     /* Check if, after a certain amount of time, no response has been had. If no, assert and reboot*/
-    if (atomic_get(&ota_state_s) == ota_state_ready)
-    {
-        __ASSERT_NO_MSG(atomic_get(&initial_ota_check) == 1);
-    }
+    __ASSERT(atomic_get(&initial_ota_check) == 1, "No response from server!");
 }
 
 static void fota_start_fn(struct k_work *unused)
@@ -463,6 +456,9 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
     if (strncmp(ota_sub_topic, topic, strlen(ota_sub_topic)) == 0)
     {
         LOG_INF("Found %s. Data size: %d", ota_sub_topic, data_len);
+
+        /* Set check flag */
+        atomic_set(&initial_ota_check, 1);
 
         /* Parse OTA event */
         int err = decode_ota_data(&ota_data, data, data_len);
@@ -650,17 +646,17 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             break;
         }
 
-        LOG_DBG("[%s:%d] SUBACK packet id: %u", __func__, __LINE__,
+        LOG_INF("[%s:%d] SUBACK packet id: %u", __func__, __LINE__,
                 evt->param.suback.message_id);
 
         /* If we're subscribed, publish the request */
         if (ota_sub_message_id == evt->param.suback.message_id && atomic_get(&initial_ota_check) == 0)
         {
-            /* Set check flag */
-            atomic_set(&initial_ota_check, 1);
-
             /* Submit work */
             k_work_submit_to_queue(main_tasks_q, &ota_request_work);
+
+            /* Delay work to make sure we are *at least* subscribed to OTA*/
+            k_delayed_work_submit_to_queue(main_tasks_q, &ota_check_subscribed_work, K_SECONDS(5));
         }
 
         break;
