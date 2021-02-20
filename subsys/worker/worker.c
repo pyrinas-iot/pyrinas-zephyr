@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2021 Circuit Dojo LLC
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <worker/worker.h>
 
 /* Queue */

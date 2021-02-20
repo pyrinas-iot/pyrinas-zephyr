@@ -1,4 +1,10 @@
 
+/*
+ * Copyright (c) 2021 Circuit Dojo LLC
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #ifndef _PYRINAS_CLOUD_H
 #define _PYRINAS_CLOUD_H
 

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2021 Circuit Dojo LLC
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <app/app_includes.h>
 
 #include <device.h>
@@ -12,12 +18,12 @@ LOG_MODULE_REGISTER(app);
  * property, or returns 0 if the property has no 'flags' cell.
  */
 
-#define FLAGS_OR_ZERO(node)                        \
-  COND_CODE_1(DT_PHA_HAS_CELL(node, gpios, flags), \
-              (DT_GPIO_FLAGS(node, gpios)),        \
-              (0))
+#define FLAGS_OR_ZERO(node)                          \
+    COND_CODE_1(DT_PHA_HAS_CELL(node, gpios, flags), \
+                (DT_GPIO_FLAGS(node, gpios)),        \
+                (0))
 
- /*
+/*
   * The led0 devicetree alias is optional. If present, we'll use it
   * to turn on the LED whenever the button is pressed.
   */
@@ -70,7 +76,7 @@ void led_init(void)
     if (ret != 0)
     {
         printk("Error %d: failed to configure LED device %s pin %d\n",
-            ret, LED0_GPIO_LABEL, LED0_GPIO_PIN);
+               ret, LED0_GPIO_LABEL, LED0_GPIO_PIN);
         return;
     }
 }

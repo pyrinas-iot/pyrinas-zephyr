@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2021 Circuit Dojo LLC
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <app/app_includes.h>
 #include <device.h>
 #include <drivers/gpio.h>

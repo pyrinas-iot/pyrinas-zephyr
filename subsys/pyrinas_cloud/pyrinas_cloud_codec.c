@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2021 Circuit Dojo LLC
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <zephyr.h>
 #include <stdio.h>
 #include <pyrinas_cloud/pyrinas_cloud.h>

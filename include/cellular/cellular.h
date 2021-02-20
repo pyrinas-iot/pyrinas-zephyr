@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2021 Circuit Dojo LLC
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 #ifndef _MODEM_H
 #define _MODEM_H
