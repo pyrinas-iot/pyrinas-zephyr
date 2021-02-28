@@ -1,0 +1,1 @@
+cd /opt/nordic/ncs/v1.4.1 ; export PATH=/opt/nordic/ncs/v1.4.1/toolchain/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin ; export GIT_EXEC_PATH=/opt/nordic/ncs/v1.4.1/toolchain/Cellar/git/2.26.2/libexec/git-core ; export ZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb ; export GNUARMEMB_TOOLCHAIN_PATH=/opt/nordic/ncs/v1.4.1/toolchain ; clear
