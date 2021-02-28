@@ -1,18 +1,11 @@
 # Example application-specific west.yml, using manifest imports.
 manifest:
   remotes:
-    - name: nrfconnect
-      url-base: https://github.com/nrfconnect
     - name: qcbor
       url-base: https://github.com/laurencelundblade
     - name: pyrinas-codec
       url-base: https://github.com/pyrinas-iot
   projects:
-    - name: nrf
-      repo-path: sdk-nrf
-      remote: nrfconnect
-      revision: v1.4.0
-      import: true
     - name: qcbor
       repo-path: QCBOR
       revision: 1fa579b5cd28a623e02cce24685e21ef5e45164c
