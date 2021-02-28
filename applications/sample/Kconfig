@@ -1,0 +1,19 @@
+#
+# Copyright (c) 2020 Circuit Dojo LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+mainmenu "Pyrinas Configuration"
+
+comment "Pyrinas-specific configuration options"
+
+config APPLICATION_WORKQUEUE_STACK_SIZE
+	int "Application workqueue stack size"
+	default 4096
+
+config APPLICATION_WORKQUEUE_PRIORITY
+	int "Application workqueue priority"
+	default SYSTEM_WORKQUEUE_PRIORITY
+
+source "Kconfig.zephyr"

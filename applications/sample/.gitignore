@@ -1,0 +1,10 @@
+build
+
+# Logs
+*.log*
+
+# Manifest
+manifest.json
+
+# Ignore _ota dir
+_ota
