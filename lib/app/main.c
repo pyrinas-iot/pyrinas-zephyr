@@ -38,15 +38,16 @@ struct device *gpio;
 
 static K_SEM_DEFINE(main_thread_proceed_sem, 0, 1);
 
-/* Delayed work for countdown */
-/* Callback data */
-static struct gpio_callback button_cb_data;
-static struct k_work button_work;
-
 /* Stack definition for application workqueue */
+#if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 K_THREAD_STACK_DEFINE(main_tasks_stack_area,
-											CONFIG_APPLICATION_WORKQUEUE_STACK_SIZE);
+					  CONFIG_APPLICATION_WORKQUEUE_STACK_SIZE);
 static struct k_work_q main_tasks_q;
+
+/* Work defs */
+static struct k_delayed_work reconnect_work;
+
+#endif
 
 #if defined(CONFIG_FILE_SYSTEM_LITTLEFS)
 #include <fs/fs.h>
@@ -55,15 +56,12 @@ static struct k_work_q main_tasks_q;
 
 FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(storage);
 static struct fs_mount_t lfs_storage_mnt = {
-		.type = FS_LITTLEFS,
-		.fs_data = &storage,
-		.storage_dev = (void *)FLASH_AREA_ID(external_flash),
-		.mnt_point = "/lfs",
+	.type = FS_LITTLEFS,
+	.fs_data = &storage,
+	.storage_dev = (void *)FLASH_AREA_ID(external_flash),
+	.mnt_point = "/lfs",
 };
 #endif
-
-/* Work defs */
-static struct k_delayed_work reconnect_work;
 
 static void flash_init()
 {
@@ -79,13 +77,13 @@ static void flash_init()
 	if (rc < 0)
 	{
 		LOG_ERR("FAIL: unable to find flash area %u: %d",
-						id, rc);
+				id, rc);
 		return;
 	}
 
 	LOG_INF("Area %u at 0x%x on %s for %u bytes",
-					id, (unsigned int)pfa->fa_off, pfa->fa_dev_name,
-					(unsigned int)pfa->fa_size);
+			id, (unsigned int)pfa->fa_off, pfa->fa_dev_name,
+			(unsigned int)pfa->fa_size);
 
 	/* Optional wipe flash contents */
 	if (IS_ENABLED(CONFIG_APP_WIPE_STORAGE))
@@ -101,8 +99,8 @@ static void flash_init()
 	if (rc < 0)
 	{
 		LOG_ERR("FAIL: mount id %u at %s: %d",
-						(unsigned int)mp->storage_dev, mp->mnt_point,
-						rc);
+				(unsigned int)mp->storage_dev, mp->mnt_point,
+				rc);
 		return;
 	}
 	LOG_INF("%s mount: %d", mp->mnt_point, rc);
@@ -115,15 +113,15 @@ static void flash_init()
 	}
 
 	LOG_INF("%s: bsize = %lu ; frsize = %lu ;"
-					" blocks = %lu ; bfree = %lu",
-					mp->mnt_point,
-					sbuf.f_bsize, sbuf.f_frsize,
-					sbuf.f_blocks, sbuf.f_bfree);
+			" blocks = %lu ; bfree = %lu",
+			mp->mnt_point,
+			sbuf.f_bsize, sbuf.f_frsize,
+			sbuf.f_blocks, sbuf.f_bfree);
 #endif
 }
 
 /* RTC control */
-struct device *rtc;
+const struct device *rtc;
 
 #ifdef CONFIG_PCF85063A
 static void rtc_init()
@@ -141,7 +139,7 @@ static void rtc_init()
 
 	// 2 seconds
 	const struct counter_alarm_cfg cfg = {
-			.ticks = 10,
+		.ticks = 10,
 	};
 
 	// Set the alarm
@@ -151,10 +149,9 @@ static void rtc_init()
 		LOG_ERR("Unable to set alarm");
 	}
 }
-
-static bool timer_flag = false;
 #endif
 
+#if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 void pyrinas_cloud_ota_evt_handler(enum pyrinas_cloud_ota_state state)
 {
 
@@ -198,21 +195,20 @@ void reconnect_work_fn(struct k_work *item)
 		k_delayed_work_submit_to_queue(&main_tasks_q, &reconnect_work, K_SECONDS(10));
 	}
 }
-	}
-}
+#endif
 
 void main(void)
 {
 
+#if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 	/* Application side work queue */
 	k_work_q_start(&main_tasks_q, main_tasks_stack_area,
-								 K_THREAD_STACK_SIZEOF(main_tasks_stack_area),
-								 CONFIG_APPLICATION_WORKQUEUE_PRIORITY);
+				   K_THREAD_STACK_SIZEOF(main_tasks_stack_area),
+				   CONFIG_APPLICATION_WORKQUEUE_PRIORITY);
 
 	/*Set worker to share*/
 	worker_init(&main_tasks_q);
 
-#if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 	int err;
 
 #if !defined(CONFIG_BSD_LIBRARY_SYS_INIT)
@@ -288,6 +284,8 @@ void main(void)
 	/* Connect */
 	__ASSERT(pyrinas_cloud_connect() == 0, "Unable to connect to MQTT. Restarting..");
 
+#else
+	k_sem_give(&main_thread_proceed_sem);
 #endif
 
 	/* Wait for ready */
