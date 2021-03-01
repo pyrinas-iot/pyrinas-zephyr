@@ -12,15 +12,15 @@
 #include <drivers/counter.h>
 #include <ble/ble_m.h>
 #include <modem/lte_lc.h>
-#include <modem/bsdlib.h>
+#include <modem/nrf_modem_lib.h>
 #include <modem/at_cmd.h>
 #include <modem/at_notif.h>
+#include <power/reboot.h>
 #include <dfu/mcuboot.h>
 #include <app/app.h>
 #include <worker/worker.h>
 
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
-#include <bsd.h>
 #include <pyrinas_cloud/pyrinas_cloud.h>
 #endif
 
@@ -197,6 +197,32 @@ void reconnect_work_fn(struct k_work *item)
 }
 #endif
 
+void handle_nrf_modem_lib_init_ret(void)
+{
+	int ret = nrf_modem_lib_get_init_ret();
+
+	/* Handle return values relating to modem firmware update */
+	switch (ret)
+	{
+	case MODEM_DFU_RESULT_OK:
+		LOG_INF("MODEM UPDATE OK. Will run new firmware");
+		sys_reboot(SYS_REBOOT_COLD);
+		break;
+	case MODEM_DFU_RESULT_UUID_ERROR:
+	case MODEM_DFU_RESULT_AUTH_ERROR:
+		LOG_ERR("MODEM UPDATE ERROR %d. Will run old firmware", ret);
+		sys_reboot(SYS_REBOOT_COLD);
+		break;
+	case MODEM_DFU_RESULT_HARDWARE_ERROR:
+	case MODEM_DFU_RESULT_INTERNAL_ERROR:
+		LOG_ERR("MODEM UPDATE FATAL ERROR %d. Modem failiure", ret);
+		sys_reboot(SYS_REBOOT_COLD);
+		break;
+	default:
+		break;
+	}
+}
+
 void main(void)
 {
 
@@ -209,40 +235,9 @@ void main(void)
 	/*Set worker to share*/
 	worker_init(&main_tasks_q);
 
-	int err;
+	/* check FOTA result */
+	handle_nrf_modem_lib_init_ret();
 
-#if !defined(CONFIG_BSD_LIBRARY_SYS_INIT)
-	err = bsdlib_init();
-#else
-	/* If bsdlib is initialized on post-kernel we should
-		 * fetch the returned error code instead of bsdlib_init
-		 */
-	err = bsdlib_get_init_ret();
-#endif
-	switch (err)
-	{
-	case MODEM_DFU_RESULT_OK:
-		printk("Modem firmware update successful!\n");
-		printk("Modem will run the new firmware after reboot\n");
-		k_thread_suspend(k_current_get());
-		break;
-	case MODEM_DFU_RESULT_UUID_ERROR:
-	case MODEM_DFU_RESULT_AUTH_ERROR:
-		printk("Modem firmware update failed\n");
-		printk("Modem will run non-updated firmware on reboot.\n");
-		break;
-	case MODEM_DFU_RESULT_HARDWARE_ERROR:
-	case MODEM_DFU_RESULT_INTERNAL_ERROR:
-		printk("Modem firmware update failed\n");
-		printk("Fatal error.\n");
-		break;
-	case -1:
-		printk("Could not initialize bsdlib.\n");
-		printk("Fatal error.\n");
-		return;
-	default:
-		break;
-	}
 #endif
 
 /* All initializations were successful mark image as working so that we
