@@ -61,6 +61,11 @@ void cellular_evt(const struct lte_lc_evt *const evt)
 void cellular_configure(void)
 {
 #if defined(CONFIG_LTE_LINK_CONTROL)
+
+  // PSM and EDRX are off
+  lte_lc_edrx_req(false);
+  lte_lc_psm_req(false);
+
   if (IS_ENABLED(CONFIG_LTE_AUTO_INIT_AND_CONNECT))
   {
     /* Do nothing, modem is already turned on
