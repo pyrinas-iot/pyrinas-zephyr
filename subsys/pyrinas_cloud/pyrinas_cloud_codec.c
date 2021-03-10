@@ -134,7 +134,7 @@ QCBORError decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *
         goto Done;
     }
 
-    LOG_INF("URL: %s%s", ota_data->host, ota_data->file);
+    LOG_INF("URL: %s/%s", ota_data->host, ota_data->file);
     LOG_INF("Force: %d", ota_data->force);
 
     /* Exit main map and return*/

@@ -13,12 +13,18 @@
 #include <ble/ble_m.h>
 #include <modem/lte_lc.h>
 #include <modem/nrf_modem_lib.h>
+
 #include <modem/at_cmd.h>
 #include <modem/at_notif.h>
 #include <power/reboot.h>
 #include <dfu/mcuboot.h>
 #include <app/app.h>
 #include <worker/worker.h>
+#include <ota/cert.h>
+
+#if defined(CONFIG_PYRINAS_CLOUD_PROVISION_CERTIFICATES)
+#include <modem/modem_key_mgmt.h>
+#endif
 
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 #include <pyrinas_cloud/pyrinas_cloud.h>
@@ -151,7 +157,52 @@ static void rtc_init()
 }
 #endif
 
-#if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
+#if defined(CONFIG_PYRINAS_CLOUD_PROVISION_CERTIFICATES)
+/* Provision certificate */
+int pyrinas_cloud_ota_cert_provision(void)
+{
+	int err;
+	bool exists;
+	uint8_t unused;
+
+	err = modem_key_mgmt_exists(CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG,
+								MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN,
+								&exists, &unused);
+	if (err)
+	{
+		printk("Failed to check for certificates err %d\n", err);
+		return err;
+	}
+
+	if (exists)
+	{
+		/* For the sake of simplicity we delete what is provisioned
+		 * with our security tag and reprovision our certificate.
+		 */
+		err = modem_key_mgmt_delete(CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG,
+									MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN);
+		if (err)
+		{
+			printk("Failed to delete existing certificate, err %d\n",
+				   err);
+		}
+	}
+
+	LOG_INF("Provisioning certificate\n");
+
+	/*  Provision certificate to the modem */
+	err = modem_key_mgmt_write(CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG,
+							   MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN,
+							   pyrinas_ota_primary_cert, sizeof(pyrinas_ota_primary_cert) - 1);
+	if (err)
+	{
+		printk("Failed to provision certificate, err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
 void pyrinas_cloud_ota_evt_handler(enum pyrinas_cloud_ota_state state)
 {
 
@@ -195,7 +246,6 @@ void reconnect_work_fn(struct k_work *item)
 		k_delayed_work_submit_to_queue(&main_tasks_q, &reconnect_work, K_SECONDS(10));
 	}
 }
-#endif
 
 void handle_nrf_modem_lib_init_ret(void)
 {
@@ -222,6 +272,7 @@ void handle_nrf_modem_lib_init_ret(void)
 		break;
 	}
 }
+#endif
 
 void main(void)
 {
@@ -261,6 +312,39 @@ void main(void)
 #endif
 
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
+
+#if defined(CONFIG_PYRINAS_CLOUD_PROVISION_CERTIFICATES)
+	int err = nrf_modem_lib_init(NORMAL_MODE);
+	if (err)
+	{
+		LOG_ERR("Failed to initialize modem library!");
+		return;
+	}
+
+	/* Initialize AT comms in order to provision the certificate */
+	err = at_cmd_init();
+	if (err)
+	{
+		printk("Failed to initialize AT commands, err %d\n", err);
+		return;
+	}
+
+	err = at_notif_init();
+	if (err)
+	{
+		printk("Failed to initialize AT notifications, err %d\n", err);
+		return;
+	}
+
+	/* Provision OTA CA cert */
+	err = pyrinas_cloud_ota_cert_provision();
+	if (err)
+	{
+		LOG_ERR("Error provisioning OTA cert. Code: %d", err);
+		return;
+	}
+#endif
+
 	/* Configure modem */
 	cellular_configure();
 
