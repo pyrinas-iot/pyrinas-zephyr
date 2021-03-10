@@ -1,0 +1,21 @@
+# Pryinas west.yml
+manifest:
+  remotes:
+    - name: qcbor
+      url-base: https://github.com/laurencelundblade
+    - name: pyrinas-codec
+      url-base: https://github.com/pyrinas-iot
+  projects:
+    - name: qcbor
+      repo-path: QCBOR
+      revision: 1fa579b5cd28a623e02cce24685e21ef5e45164c
+      path: pyrinas/ext/qcbor
+      remote: qcbor
+    - name: pyrinas-codec
+      revision: master
+      path: pyrinas/ext/pyrinas-codec
+      remote: pyrinas-codec
+  self:
+    # This repository should be cloned to pyrinas.
+    path: pyrinas
+
