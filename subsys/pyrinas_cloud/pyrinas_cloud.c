@@ -36,7 +36,7 @@ static void telemetry_check_event(struct k_timer *timer);
 K_TIMER_DEFINE(telemetry_timer, telemetry_check_event, NULL);
 
 /* Telemetry interval */
-#define TELEMETRY_INTERVAL K_MINUTES(10)
+#define TELEMETRY_INTERVAL K_MINUTES(30)
 
 /* Security tag for fetching certs */
 static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
