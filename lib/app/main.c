@@ -188,7 +188,7 @@ int pyrinas_cloud_ota_cert_provision(void)
 		}
 	}
 
-	LOG_INF("Provisioning certificate\n");
+	LOG_INF("Provisioning certificate");
 
 	/*  Provision certificate to the modem */
 	err = modem_key_mgmt_write(CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG,

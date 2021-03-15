@@ -469,6 +469,10 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
         /* Parse OTA event */
         int err = decode_ota_data(&ota_data, data, data_len);
 
+        uint8_t ver[64];
+        get_version_string(ver, sizeof(ver));
+        LOG_INF("Current Version: %s", ver);
+
         /* If error then no update available */
         if (err == 0)
         {
@@ -818,7 +822,7 @@ static void fota_evt(const struct fota_download_evt *evt)
     switch (evt->id)
     {
     case FOTA_DOWNLOAD_EVT_ERROR:
-        printk("Received error from fota_download\n");
+        LOG_INF("Received error from fota_download\n");
 
         /* Set the state */
         atomic_set(&ota_state_s, ota_state_error);
@@ -832,7 +836,7 @@ static void fota_evt(const struct fota_download_evt *evt)
 
         break;
     case FOTA_DOWNLOAD_EVT_FINISHED:
-        printk("OTA Done.\n");
+        LOG_INF("OTA Done.\n");
 
         /* Set the state */
         atomic_set(&ota_state_s, ota_state_done);
