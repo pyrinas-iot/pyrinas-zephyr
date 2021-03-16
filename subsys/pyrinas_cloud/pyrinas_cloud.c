@@ -836,7 +836,7 @@ static void fota_evt(const struct fota_download_evt *evt)
 
         break;
     case FOTA_DOWNLOAD_EVT_FINISHED:
-        LOG_INF("OTA Done.\n");
+        LOG_INF("OTA Done.");
 
         /* Set the state */
         atomic_set(&ota_state_s, ota_state_done);
