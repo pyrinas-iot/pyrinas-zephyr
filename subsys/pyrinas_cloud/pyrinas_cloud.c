@@ -973,12 +973,16 @@ static int pyrinas_cloud_publish_telemetry_evt(pyrinas_event_t *evt)
 {
 
     char topic[256];
-    char uid[14];
+    char uid[12];
     char buf[64];
     size_t payload_len = 0;
     int err = 0;
 
     struct pyrinas_cloud_telemetry_data data;
+
+    /* Set default off*/
+    data.has_version = false;
+    data.has_rsrp = false;
 
     /* Check if central RSSI */
     if (evt->central_rssi < 0)
@@ -1012,7 +1016,7 @@ static int pyrinas_cloud_publish_telemetry_evt(pyrinas_event_t *evt)
     /* Create topic */
     snprintf(topic, sizeof(topic),
              CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC,
-             strlen(uid), uid);
+             sizeof(uid), uid);
 
     /* Publish the data */
     return data_publish(topic, strlen(topic), buf, payload_len, sys_rand32_get());
