@@ -1049,6 +1049,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     }
 
     /* Publish telemetry */
+    /* TODO: don't do this every message... */
     return pyrinas_cloud_publish_telemetry_evt(evt);
 }
 
@@ -1135,7 +1136,6 @@ void pyrinas_cloud_process()
                 if (err != 0)
                 {
                     LOG_ERR("ERROR: mqtt_input %d", err);
-                    mqtt_abort(&client);
                     break;
                 }
             }
@@ -1143,16 +1143,21 @@ void pyrinas_cloud_process()
             if ((fds.revents & POLLERR) == POLLERR)
             {
                 LOG_ERR("POLLERR\n");
-                mqtt_abort(&client);
                 break;
             }
 
             if ((fds.revents & POLLNVAL) == POLLNVAL)
             {
                 LOG_ERR("POLLNVAL\n");
-                mqtt_abort(&client);
                 break;
             }
+        }
+
+        /* Disconnect after error */
+        err = mqtt_disconnect(&client);
+        if (err)
+        {
+            printk("Could not disconnect: %d\n", err);
         }
     }
 }
