@@ -4,21 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr.h>
 #include <stdio.h>
-#include <drivers/uart.h>
-#include <device.h>
-#include <string.h>
-#include <modem/at_cmd.h>
+
 #include <random/rand32.h>
 #include <net/mqtt.h>
 #include <net/socket.h>
-#include <modem/lte_lc.h>
+#include <modem/at_cmd.h>
 #include <pyrinas_cloud/pyrinas_cloud.h>
-#include <cellular/cellular.h>
+
 #include <net/fota_download.h>
 #include <power/reboot.h>
-#include <drivers/watchdog.h>
+#include <cellular/cellular.h>
+
 #include <assert.h>
 #include <app/version.h>
 
@@ -34,6 +31,9 @@ LOG_MODULE_REGISTER(pyrinas_cloud);
 
 static void telemetry_check_event(struct k_timer *timer);
 K_TIMER_DEFINE(telemetry_timer, telemetry_check_event, NULL);
+
+/*FDS related*/
+#define INVALID_FDS -1
 
 /* Telemetry interval */
 #define TELEMETRY_INTERVAL K_MINUTES(30)
@@ -63,16 +63,13 @@ static struct mqtt_client client;
 static struct sockaddr_storage broker;
 
 /* Thread control */
-static K_SEM_DEFINE(pyrinas_cloud_thread_sem, 0, 1);
+static K_SEM_DEFINE(connection_poll_sem, 0, 1);
 
 /* Atomic flags */
 static atomic_val_t cloud_state_s = ATOMIC_INIT(cloud_state_disconnected);
 static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
 static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
-static atomic_val_t wdt_started_s = ATOMIC_INIT(0);
-
-/* File descriptor */
-static struct pollfd fds;
+static atomic_t connection_poll_active;
 
 /* Queue */
 static struct k_work_q *main_tasks_q;
@@ -87,9 +84,6 @@ static struct k_delayed_work fota_work;
 /* Used in system */
 static struct k_work ota_reboot_work;
 
-/* Thread id */
-static k_tid_t pyrinas_cloud_thread_id;
-
 /* Making the ota dat static */
 static struct pyrinas_cloud_ota_data ota_data;
 
@@ -102,7 +96,6 @@ static pyrinas_cloud_state_evt_t cloud_state_callback = NULL;
 
 /* Statically track message id*/
 static uint16_t ota_sub_message_id = 0;
-static int wdt_channel_id;
 
 /* WDT Device */
 const struct device *wdt_drv;
@@ -229,7 +222,6 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
 }
 
 /**@brief Function to unsubscribe to the configured topic
- */
 static int unsubscribe(char *topic, size_t len)
 {
     struct mqtt_topic subscribe_topic = {
@@ -244,6 +236,7 @@ static int unsubscribe(char *topic, size_t len)
 
     return mqtt_unsubscribe(&client, &subscription_list);
 }
+ */
 
 /**@brief Function to subscribe to the configured topic
  */
@@ -334,6 +327,10 @@ static void publish_telemetry(bool has_version)
     char buf[64];
     size_t payload_len = 0;
     int err = 0;
+
+    /* Not used here.. */
+    data.has_central_rssi = false;
+    data.has_peripheral_rssi = false;
 
     /*Get rsrp*/
     char rsrp = cellular_get_signal_strength();
@@ -811,6 +808,7 @@ static int client_init(struct mqtt_client *client, char *p_client_id, size_t cli
     tls_config->sec_tag_count = ARRAY_SIZE(sec_tag_list);
     tls_config->sec_tag_list = sec_tag_list;
     tls_config->hostname = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME;
+    tls_config->session_cache = TLS_SESSION_CACHE_DISABLED;
 
     return 0;
 }
@@ -858,44 +856,15 @@ static void fota_evt(const struct fota_download_evt *evt)
 int pyrinas_cloud_connect()
 {
 
-    int err;
-
-    /*Check if already connected*/
-    if (atomic_get(&cloud_state_s) == cloud_state_connected)
+    /* Check if thread is already active. */
+    if (atomic_get(&connection_poll_active))
+    {
+        LOG_WRN("Connection poll in progress");
         return -EINPROGRESS;
-
-    /* Get the IMEI */
-    get_imei(imei, sizeof(imei));
-
-    /* MQTT client create */
-    err = client_init(&client, imei, sizeof(imei));
-    if (err != 0)
-    {
-        LOG_ERR("client_init %d", err);
-        return err;
     }
-
-    /* Connect to MQTT */
-    err = mqtt_connect(&client);
-    if (err != 0)
-    {
-        LOG_ERR("mqtt_connect %d", err);
-        return err;
-    }
-
-    /* Set FDS info */
-    fds.fd = client.transport.tls.sock;
-    fds.events = POLLIN;
-
-    /* Set state */
-    atomic_set(&cloud_state_s, cloud_state_connected);
-
-    /* Send to calback */
-    if (cloud_state_callback)
-        cloud_state_callback(cloud_state_s);
 
     /* Start the thread (if not already)*/
-    k_sem_give(&pyrinas_cloud_thread_sem);
+    k_sem_give(&connection_poll_sem);
 
     return 0;
 }
@@ -913,7 +882,7 @@ int pyrinas_cloud_disconnect()
     if (err)
     {
         return err;
-        printk("Could not disconnect MQTT client. Error: %d\n", err);
+        LOG_ERR("Could not disconnect MQTT client. Error: %d", err);
     }
 
     return 0;
@@ -927,20 +896,6 @@ void pyrinas_cloud_init(struct k_work_q *task_q, pyrinas_cloud_ota_state_evt_t c
     /* Set the watchdog device */
     wdt_drv = device_get_binding(DT_LABEL(DT_NODELABEL(wdt)));
     __ASSERT(wdt_drv != NULL, "WDT not found in device defintion.");
-
-    /* Watchdog! */
-    const struct wdt_timeout_cfg wdt_settings = {
-        .window = {
-            .min = 0,
-            .max = 60000,
-        },
-        .callback = NULL,
-        .flags = WDT_FLAG_RESET_SOC};
-
-    /* Install WDT timeout*/
-    wdt_channel_id = wdt_install_timeout(
-        wdt_drv, &wdt_settings);
-    __ASSERT(wdt_channel_id >= 0, "WDT cannot be initialized.");
 
     /*Set the task queue*/
     main_tasks_q = task_q;
@@ -973,12 +928,15 @@ static int pyrinas_cloud_publish_telemetry_evt(pyrinas_event_t *evt)
 {
 
     char topic[256];
-    char uid[12];
+    char uid[14];
     char buf[64];
     size_t payload_len = 0;
     int err = 0;
 
     struct pyrinas_cloud_telemetry_data data;
+
+    /* Memset uid */
+    memset(uid, 0, sizeof(uid));
 
     /* Set default off*/
     data.has_version = false;
@@ -1016,7 +974,7 @@ static int pyrinas_cloud_publish_telemetry_evt(pyrinas_event_t *evt)
     /* Create topic */
     snprintf(topic, sizeof(topic),
              CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC,
-             sizeof(uid), uid);
+             strlen(uid), uid);
 
     /* Publish the data */
     return data_publish(topic, strlen(topic), buf, payload_len, sys_rand32_get());
@@ -1027,6 +985,9 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     char topic[256];
     char uid[14];
     int err;
+
+    /* Memset uid */
+    memset(uid, 0, sizeof(uid));
 
     /* Get peripheral address */
     snprintf(uid, sizeof(uid), "%02x%02x%02x%02x%02x%02x",
@@ -1072,97 +1033,121 @@ void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb)
     cloud_state_callback = cb;
 }
 
-void pyrinas_cloud_process()
+void pyrinas_cloud_process(void)
 {
     int err;
 
-    /* Get thread id*/
-    pyrinas_cloud_thread_id = k_current_get();
+    /* File descriptor */
+    static struct pollfd fds;
+
+    /* Get the IMEI */
+    get_imei(imei, sizeof(imei));
+
+start:
+    k_sem_take(&connection_poll_sem, K_FOREVER);
+    atomic_set(&connection_poll_active, 1);
+
+    /* MQTT client create */
+    err = client_init(&client, imei, sizeof(imei));
+    if (err != 0)
+    {
+        LOG_ERR("client_init %d", err);
+    }
+
+    /* Connect to MQTT */
+    err = mqtt_connect(&client);
+    if (err != 0)
+    {
+        LOG_ERR("mqtt_connect %d", err);
+
+        /* Send to calback */
+        if (cloud_state_callback)
+            cloud_state_callback(cloud_state_s);
+
+        goto reset;
+    }
+
+    /* Set FDS info */
+    fds.fd = client.transport.tls.sock;
+    fds.events = POLLIN;
+
+    /* Connected */
+    atomic_set(&cloud_state_s, cloud_state_connected);
+
+    /* Send to calback */
+    if (cloud_state_callback)
+        cloud_state_callback(cloud_state_s);
 
     while (true)
     {
 
-        /* Don't go any further until MQTT is connected */
-        err = k_sem_take(&pyrinas_cloud_thread_sem, K_SECONDS(55));
-        if (err)
-        {
-            /* Touch the WDT */
-            if (atomic_get(&wdt_started_s))
-                wdt_feed(wdt_drv, wdt_channel_id);
+        /* Then process MQTT */
+        err = poll(&fds, 1, mqtt_keepalive_time_left(&client));
 
-            /* If timeout continue*/
+        /* Ping if not error */
+        err = mqtt_live(&client);
+        if (err == 0)
+        {
+            LOG_INF("[%s:%d] ping sent", __func__, __LINE__);
+        }
+        else if ((err != 0) && (err != -EAGAIN))
+        {
+            LOG_ERR("ERROR: mqtt_live %d", err);
+            break;
+        }
+
+        if ((fds.revents & POLLIN) == POLLIN)
+        {
+
+            err = mqtt_input(&client);
+            if (err != 0)
+            {
+                LOG_ERR("ERROR: mqtt_input %d", err);
+                break;
+            }
+
+            /* Check if socket is closed */
+            if (atomic_get(&cloud_state_s) == cloud_state_disconnected)
+            {
+                LOG_WRN("Socket already closed!");
+                break;
+            }
+
             continue;
         }
 
-        /* Only start if it hasn't been already */
-        if (atomic_get(&wdt_started_s) == 0)
+        if (err < 0)
         {
-            /* Bring up WDT after enabling */
-            err = wdt_setup(wdt_drv, 0);
-            if (err)
-                LOG_ERR("WDT setup error. Error: %i", err);
-
-            atomic_set(&wdt_started_s, 1);
+            LOG_ERR("ERROR: poll %d\n", errno);
+            break;
         }
 
-        while (atomic_get(&cloud_state_s) == cloud_state_connected)
+        if ((fds.revents & POLLERR) == POLLERR)
         {
-
-            /* Touch the WDT */
-            wdt_feed(wdt_drv, wdt_channel_id);
-
-            /* Then process MQTT */
-            err = poll(&fds, 1, mqtt_keepalive_time_left(&client));
-            if (err < 0)
-            {
-                LOG_ERR("ERROR: poll %d\n", errno);
-                break;
-            }
-
-            err = mqtt_live(&client);
-            if (err == 0)
-            {
-                LOG_INF("[%s:%d] ping sent", __func__, __LINE__);
-            }
-            else if ((err != 0) && (err != -EAGAIN))
-            {
-                LOG_ERR("ERROR: mqtt_live %d", err);
-                break;
-            }
-
-            if ((fds.revents & POLLIN) == POLLIN)
-            {
-                err = mqtt_input(&client);
-                if (err != 0)
-                {
-                    LOG_ERR("ERROR: mqtt_input %d", err);
-                    break;
-                }
-            }
-
-            if ((fds.revents & POLLERR) == POLLERR)
-            {
-                LOG_ERR("POLLERR\n");
-                break;
-            }
-
-            if ((fds.revents & POLLNVAL) == POLLNVAL)
-            {
-                LOG_ERR("POLLNVAL\n");
-                break;
-            }
+            LOG_ERR("POLLERR\n");
+            break;
         }
 
-        /* Disconnect after error */
-        err = mqtt_disconnect(&client);
-        if (err)
+        if ((fds.revents & POLLHUP) == POLLHUP)
         {
-            printk("Could not disconnect: %d\n", err);
+            LOG_ERR("POLLHUP\n");
+            break;
+        }
+
+        if ((fds.revents & POLLNVAL) == POLLNVAL)
+        {
+            LOG_ERR("POLLNVAL\n");
+            break;
         }
     }
+
+reset:
+    atomic_set(&connection_poll_active, 0);
+    k_sem_take(&connection_poll_sem, K_NO_WAIT);
+    goto start;
 }
 
 #define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(2)
-static K_THREAD_STACK_DEFINE(pyrinas_cloud_thread_stack, PYRINAS_CLOUD_THREAD_STACK_SIZE);
-K_THREAD_DEFINE(pyrinas_cloud_thread, K_THREAD_STACK_SIZEOF(pyrinas_cloud_thread_stack),
-                pyrinas_cloud_process, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+K_THREAD_DEFINE(pyrinas_cloud_thread, PYRINAS_CLOUD_THREAD_STACK_SIZE,
+                pyrinas_cloud_process, NULL, NULL, NULL,
+                K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);

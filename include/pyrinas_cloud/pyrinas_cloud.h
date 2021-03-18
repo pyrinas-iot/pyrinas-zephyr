@@ -111,8 +111,6 @@ int pyrinas_cloud_disconnect();
 
 void pyrinas_cloud_start();
 
-void pyrinas_cloud_process();
-
 bool pyrinas_cloud_is_connected();
 
 void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb);

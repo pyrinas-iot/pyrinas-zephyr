@@ -361,7 +361,7 @@ void main(void)
 	pyrinas_cloud_register_state_evt(cloud_state_callback);
 
 	/* Connect */
-	__ASSERT(pyrinas_cloud_connect() == 0, "Unable to connect to MQTT. Restarting..");
+	pyrinas_cloud_connect();
 
 #else
 	k_sem_give(&main_thread_proceed_sem);
