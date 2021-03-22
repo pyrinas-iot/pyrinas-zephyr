@@ -592,6 +592,9 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         /* Set state */
         atomic_set(&cloud_state_s, cloud_state_disconnected);
 
+        /* Clear check flag */
+        atomic_set(&initial_ota_check, 0);
+
         /* Send to calback */
         if (cloud_state_callback)
             cloud_state_callback(cloud_state_s);
