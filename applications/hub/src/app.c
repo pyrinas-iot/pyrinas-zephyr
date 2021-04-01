@@ -29,9 +29,6 @@ LOG_MODULE_REGISTER(app);
 #define SW0_GPIO_PIN DT_GPIO_PIN(SW0_NODE, gpios)
 #define SW0_GPIO_FLAGS (GPIO_INPUT | FLAGS_OR_ZERO(SW0_NODE))
 
-/* Work function */
-static struct k_work erase_bonds_work;
-
 static void my_expiry_function(struct k_timer *timer);
 K_TIMER_DEFINE(my_timer, my_expiry_function, NULL);
 
@@ -39,12 +36,6 @@ static struct gpio_callback button_cb_data;
 
 char count[10];
 int tx_counter = 0;
-
-static void erase_bonds_work_fn()
-{
-    /* Erase bonds */
-    ble_erase_bonds();
-}
 
 static void my_expiry_function(struct k_timer *timer)
 {
@@ -90,10 +81,10 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
 {
     LOG_DBG("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 
-    k_work_submit(&erase_bonds_work);
+    ble_erase_bonds();
 }
 
-void button_init()
+static void button_init()
 {
 
     const struct device *button;
@@ -143,9 +134,6 @@ void setup(void)
 
     /* Button init */
     button_init();
-
-    /* Work init */
-    k_work_init(&erase_bonds_work, erase_bonds_work_fn);
 
     // Default config for central mode
     BLE_STACK_CENTRAL_DEF(init);

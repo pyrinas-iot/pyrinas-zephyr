@@ -33,13 +33,28 @@ static raw_susbcribe_handler_t m_raw_handler_ext;
 static bool m_init_complete = false;
 
 /* Related work handler for rx ring buf*/
+static struct k_work bt_send_work;
+static struct k_work bt_ready_work;
+static struct k_work bt_erase_bonds_work;
 static void bt_send_work_handler(struct k_work *work);
-static K_WORK_DEFINE(bt_send_work, bt_send_work_handler);
+static void bt_send_ready_work_handler(struct k_work *work);
+static void bt_erase_bonds_work_handler(struct k_work *work);
 
 static int subscriber_search(pyrinas_event_name_data_t *event_name); /* Forward declaration of subscriber_search */
 
 /* Temporary evt */
 static pyrinas_event_t evt;
+
+static void bt_erase_bonds_work_handler(struct k_work *work)
+{
+    LOG_INF("Erasing bonds..");
+
+    int err = bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
+    if (err)
+    {
+        LOG_ERR("bt_unpair: %d", err);
+    }
+}
 
 static void bt_send_work_handler(struct k_work *work)
 {
@@ -142,7 +157,7 @@ void ble_publish_raw(pyrinas_event_t event)
     size_t size = 0;
 
     /* Encode into something useful */
-    int err = pyrinas_codec_encode(&event, buf + 1, pyrinas_event_t_size - 1, &size);
+    int err = pyrinas_codec_encode(&event, buf, pyrinas_event_t_size, &size);
     if (err)
     {
         LOG_ERR("Unable to encode pyrinas message");
@@ -251,21 +266,11 @@ static void ble_evt_handler(const char *data, uint16_t len)
     }
 }
 
-static void ble_ready(int err)
+static void bt_send_ready_work_handler(struct k_work *work)
 {
-    // Check for errors
-    if (err)
-    {
-        LOG_ERR("BLE Stack init error!");
-        return;
-    }
-    else
-    {
-        LOG_INF("BLE Stack Ready!");
-    }
 
     // Load settings..
-    if (IS_ENABLED(CONFIG_SETTINGS))
+    if (IS_ENABLED(CONFIG_BT_SETTINGS))
     {
         // Get the settings..
         int ret = settings_load();
@@ -287,6 +292,21 @@ static void ble_ready(int err)
 #endif
 }
 
+static void ble_ready(int err)
+{
+    // Check for errors
+    if (err)
+    {
+        LOG_ERR("BLE Stack init error!");
+        return;
+    }
+    else
+    {
+        LOG_INF("BLE Stack Ready!");
+        k_work_submit(&bt_ready_work);
+    }
+}
+
 // TODO: transmit power
 void ble_stack_init(ble_stack_init_t *p_init)
 {
@@ -299,6 +319,11 @@ void ble_stack_init(ble_stack_init_t *p_init)
     }
 
     LOG_INF("Buffer item size: %d", BLE_QUEUE_ITEM_SIZE);
+
+    /* Init work */
+    k_work_init(&bt_send_work, bt_send_work_handler);
+    k_work_init(&bt_ready_work, bt_send_ready_work_handler);
+    k_work_init(&bt_erase_bonds_work, bt_erase_bonds_work_handler);
 
     // Copy over configuration
     memcpy(&m_config, p_init, sizeof(m_config));
@@ -356,11 +381,5 @@ static int subscriber_search(pyrinas_event_name_data_t *event_name)
 
 void ble_erase_bonds(void)
 {
-    LOG_INF("Erasing bonds..");
-
-    int err = bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
-    if (err)
-    {
-        LOG_ERR("bt_unpair: %d", err);
-    }
+    k_work_submit(&bt_erase_bonds_work);
 }

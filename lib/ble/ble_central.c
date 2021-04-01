@@ -70,7 +70,8 @@ static void bt_start_scan_work_handler(struct k_work *work)
 
 static void bt_send_work_handler(struct k_work *work)
 {
-    // int err;
+    int err;
+
     bool schedule_work = false;
 
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
@@ -84,33 +85,28 @@ static void bt_send_work_handler(struct k_work *work)
             continue;
         }
 
-        // if (bt_gatt_nus_c_send_is_busy(&m_conns[i].nus_c)) {
-        // 		schedule_work = true;
-        // 		continue;
-        // }
-
         LOG_DBG("%d: ready!", i);
 
         // Static event
-        // static ble_fifo_data_t ble_payload;
+        static ble_fifo_data_t ble_payload;
 
         // Get the latest item
-        // err = k_msgq_get(&m_conns[i].q, &ble_payload, K_NO_WAIT);
-        // if (err)
-        // {
-        //     LOG_WRN("%d Unable to get data from queue", i);
-        //     continue;
-        // }
+        err = k_msgq_get(&m_conns[i].q, &ble_payload, K_NO_WAIT);
+        if (err)
+        {
+            LOG_WRN("%d Unable to get data from queue", i);
+            continue;
+        }
 
         // Send the data
         // ! This call is asyncronous. Need to call semaphore and then release once data is sent.
-        // err = bt_gatt_nus_c_send(&m_conns[i].nus_c, ble_payload.data, ble_payload.len);
-        // if (err)
-        // {
-        //     LOG_ERR("Failed to send data over BLE connection"
-        //             "(err %d)",
-        //             err);
-        // }
+        err = bt_pyrinas_client_send(&m_conns[i].pyrinas_client, ble_payload.data, ble_payload.len);
+        if (err)
+        {
+            LOG_ERR("Failed to send data over BLE connection"
+                    "(err %d)",
+                    err);
+        }
 
         LOG_DBG("%d: msg send!", i);
     }
@@ -289,15 +285,15 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
         // Queue if ready
-        // if (m_conns[i].ready)
-        // {
-        //     // Add struct to queue
-        //     int err = k_msgq_put(&m_conns[i].q, &evt, K_NO_WAIT);
-        //     if (err)
-        //     {
-        //         LOG_ERR("Unable to add item to queue!");
-        //     }
-        // }
+        if (m_conns[i].ready)
+        {
+            // Add struct to queue
+            int err = k_msgq_put(&m_conns[i].q, &evt, K_NO_WAIT);
+            if (err)
+            {
+                LOG_ERR("Unable to add item to queue!");
+            }
+        }
     }
 
     // Start the worker thread

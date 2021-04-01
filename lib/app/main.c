@@ -48,15 +48,9 @@ struct device *gpio;
 
 static K_SEM_DEFINE(main_thread_proceed_sem, 0, 1);
 
-/* Stack definition for application workqueue */
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
-K_THREAD_STACK_DEFINE(main_tasks_stack_area,
-					  CONFIG_APPLICATION_WORKQUEUE_STACK_SIZE);
-static struct k_work_q main_tasks_q;
-
 /* Work defs */
 static struct k_delayed_work reconnect_work;
-
 #endif
 
 #if defined(CONFIG_FILE_SYSTEM_LITTLEFS)
@@ -230,7 +224,7 @@ static void cloud_state_callback(enum pryinas_cloud_state state)
 	{
 	case cloud_state_disconnected:
 		LOG_WRN("Disconnected!");
-		k_delayed_work_submit_to_queue(&main_tasks_q, &reconnect_work, K_SECONDS(2));
+		k_delayed_work_submit(&reconnect_work, K_SECONDS(2));
 		break;
 
 	case cloud_state_connected:
@@ -247,7 +241,7 @@ void reconnect_work_fn(struct k_work *item)
 	if (err && err != EINPROGRESS)
 	{
 		LOG_WRN("Unable to re-connect. Err: %d", err);
-		k_delayed_work_submit_to_queue(&main_tasks_q, &reconnect_work, K_SECONDS(10));
+		k_delayed_work_submit(&reconnect_work, K_SECONDS(10));
 	}
 }
 
@@ -282,13 +276,6 @@ void main(void)
 {
 
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
-	/* Application side work queue */
-	k_work_q_start(&main_tasks_q, main_tasks_stack_area,
-				   K_THREAD_STACK_SIZEOF(main_tasks_stack_area),
-				   CONFIG_APPLICATION_WORKQUEUE_PRIORITY);
-
-	/*Set worker to share*/
-	worker_init(&main_tasks_q);
 
 	/* check FOTA result */
 	handle_nrf_modem_lib_init_ret();
@@ -315,6 +302,16 @@ void main(void)
 	rtc_init();
 #endif
 
+#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+
+	/* Setup Bluetooth */
+	BLE_STACK_CENTRAL_DEF(bt_init);
+
+	/* BLE initialization */
+	ble_stack_init(&bt_init);
+
+#endif
+
 #if defined(CONFIG_PYRINAS_CLOUD_ENABLED)
 
 #if defined(CONFIG_PYRINAS_CLOUD_PROVISION_CERTIFICATES)
@@ -322,7 +319,6 @@ void main(void)
 	if (err)
 	{
 		LOG_ERR("Failed to initialize modem library!");
-		return;
 	}
 
 	/* Initialize AT comms in order to provision the certificate */
@@ -330,14 +326,12 @@ void main(void)
 	if (err)
 	{
 		printk("Failed to initialize AT commands, err %d\n", err);
-		return;
 	}
 
 	err = at_notif_init();
 	if (err)
 	{
 		printk("Failed to initialize AT notifications, err %d\n", err);
-		return;
 	}
 
 	/* Provision OTA CA cert */
@@ -345,7 +339,6 @@ void main(void)
 	if (err)
 	{
 		LOG_ERR("Error provisioning OTA cert. Code: %d", err);
-		return;
 	}
 #endif
 
@@ -359,13 +352,17 @@ void main(void)
 	k_delayed_work_init(&reconnect_work, reconnect_work_fn);
 
 	/* Init Pyrinas Cloud */
-	pyrinas_cloud_init(&main_tasks_q, pyrinas_cloud_ota_evt_handler);
+	pyrinas_cloud_init(pyrinas_cloud_ota_evt_handler);
 
 	/* Callback time*/
 	pyrinas_cloud_register_state_evt(cloud_state_callback);
 
 	/* Connect */
-	pyrinas_cloud_connect();
+	err = pyrinas_cloud_connect();
+	if (err)
+	{
+		LOG_ERR("Unable to connect to Pyrinas cloud. Code: %d", err);
+	}
 
 #else
 	k_sem_give(&main_thread_proceed_sem);

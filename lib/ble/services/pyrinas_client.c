@@ -42,7 +42,7 @@ static uint8_t on_received(struct bt_conn *conn,
         return BT_GATT_ITER_STOP;
     }
 
-    LOG_INF("[NOTIFICATION] data %p length %u", data, length);
+    LOG_DBG("[NOTIFICATION] data %p length %u", data, length);
     if (pyrinas->cb.received)
     {
         return pyrinas->cb.received(data, length);

@@ -102,7 +102,7 @@ typedef struct
 } pryinas_cloud_application_cb_entry_t;
 
 /* Init MQTT Client */
-void pyrinas_cloud_init(struct k_work_q *task_q, pyrinas_cloud_ota_state_evt_t cb);
+void pyrinas_cloud_init(pyrinas_cloud_ota_state_evt_t cb);
 
 void pyrinas_cloud_test();
 
@@ -132,5 +132,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt);
 
 /* Publish central event to the cloud */
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len);
+
+void pyrinas_cloud_process();
 
 #endif /* _PYRINAS_CLOUD_H */

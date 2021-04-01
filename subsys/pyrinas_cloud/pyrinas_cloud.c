@@ -71,8 +71,8 @@ static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
 static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
 static atomic_t connection_poll_active;
 
-/* Queue */
-static struct k_work_q *main_tasks_q;
+/* File descriptor */
+static struct pollfd fds;
 
 /* Structures for work */
 static struct k_work publish_telemetry_work;
@@ -96,9 +96,6 @@ static pyrinas_cloud_state_evt_t cloud_state_callback = NULL;
 
 /* Statically track message id*/
 static uint16_t ota_sub_message_id = 0;
-
-/* WDT Device */
-const struct device *wdt_drv;
 
 #if defined(CONFIG_BSD_LIBRARY)
 
@@ -377,7 +374,7 @@ static void telemetry_check_event(struct k_timer *timer)
 {
 
     /* Publish from work queue or else hard fault */
-    k_work_submit_to_queue(main_tasks_q, &publish_telemetry_work);
+    k_work_submit(&publish_telemetry_work);
 
     /* Restart timer */
     k_timer_start(&telemetry_timer, TELEMETRY_INTERVAL, K_NO_WAIT);
@@ -501,7 +498,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             }
 
             /* Start upgrade here*/
-            k_delayed_work_submit_to_queue(main_tasks_q, &fota_work, K_SECONDS(5));
+            k_delayed_work_submit(&fota_work, K_SECONDS(5));
         }
         else
         {
@@ -514,7 +511,7 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
                 LOG_INF("Ota ready.");
 
                 /* Let the backend know we're done */
-                k_work_submit_to_queue(main_tasks_q, &ota_done_work);
+                k_work_submit(&ota_done_work);
 
                 /* Subscribe to Application topic */
                 subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
@@ -574,7 +571,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         LOG_INF("MQTT client connected!");
 
         /* On connect work */
-        k_work_submit_to_queue(main_tasks_q, &on_connect_work);
+        k_work_submit(&on_connect_work);
 
         /*Start telemetry timer every TELEMETRY_INTERVAL */
         k_timer_start(&telemetry_timer, TELEMETRY_INTERVAL, K_NO_WAIT);
@@ -663,10 +660,10 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         if (ota_sub_message_id == evt->param.suback.message_id && atomic_get(&initial_ota_check) == 0)
         {
             /* Submit work */
-            k_work_submit_to_queue(main_tasks_q, &ota_request_work);
+            k_work_submit(&ota_request_work);
 
             /* Delay work to make sure we are *at least* subscribed to OTA*/
-            k_delayed_work_submit_to_queue(main_tasks_q, &ota_check_subscribed_work, K_SECONDS(5));
+            k_delayed_work_submit(&ota_check_subscribed_work, K_SECONDS(5));
         }
 
         break;
@@ -891,17 +888,8 @@ int pyrinas_cloud_disconnect()
     return 0;
 }
 
-void pyrinas_cloud_init(struct k_work_q *task_q, pyrinas_cloud_ota_state_evt_t cb)
+void pyrinas_cloud_init(pyrinas_cloud_ota_state_evt_t cb)
 {
-    /* Error if queue is not attached */
-    __ASSERT(task_q != NULL, "Task queue must not be NULL.");
-
-    /* Set the watchdog device */
-    wdt_drv = device_get_binding(DT_LABEL(DT_NODELABEL(wdt)));
-    __ASSERT(wdt_drv != NULL, "WDT not found in device defintion.");
-
-    /*Set the task queue*/
-    main_tasks_q = task_q;
 
     /*Set the callback*/
     ota_state_callback = cb;
@@ -997,7 +985,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
              evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
              evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
 
-    LOG_DBG("Sending to: %s.", evt->name.bytes);
+    LOG_INF("Sending from [%s] %s.", log_strdup(uid), log_strdup(evt->name.bytes));
 
     /* Create topic */
     snprintf(topic, sizeof(topic),
@@ -1036,12 +1024,9 @@ void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb)
     cloud_state_callback = cb;
 }
 
-void pyrinas_cloud_process(void)
+void pyrinas_cloud_poll(void)
 {
     int err;
-
-    /* File descriptor */
-    static struct pollfd fds;
 
     /* Get the IMEI */
     get_imei(imei, sizeof(imei));
@@ -1087,27 +1072,16 @@ start:
         /* Then process MQTT */
         err = poll(&fds, 1, mqtt_keepalive_time_left(&client));
 
-        /* Ping if not error */
-        err = mqtt_live(&client);
+        /* If poll returns 0 the timeout has expired. */
         if (err == 0)
         {
-            LOG_INF("[%s:%d] ping sent", __func__, __LINE__);
-        }
-        else if ((err != 0) && (err != -EAGAIN))
-        {
-            LOG_ERR("ERROR: mqtt_live %d", err);
-            break;
+            pyrinas_cloud_process();
+            continue;
         }
 
         if ((fds.revents & POLLIN) == POLLIN)
         {
-
-            err = mqtt_input(&client);
-            if (err != 0)
-            {
-                LOG_ERR("ERROR: mqtt_input %d", err);
-                break;
-            }
+            pyrinas_cloud_process();
 
             /* Check if socket is closed */
             if (atomic_get(&cloud_state_s) == cloud_state_disconnected)
@@ -1150,7 +1124,13 @@ reset:
     goto start;
 }
 
-#define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(2)
+void pyrinas_cloud_process()
+{
+    mqtt_input(&client);
+    mqtt_live(&client);
+}
+
+#define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(3)
 K_THREAD_DEFINE(pyrinas_cloud_thread, PYRINAS_CLOUD_THREAD_STACK_SIZE,
-                pyrinas_cloud_process, NULL, NULL, NULL,
+                pyrinas_cloud_poll, NULL, NULL, NULL,
                 K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
