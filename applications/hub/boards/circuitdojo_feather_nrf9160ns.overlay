@@ -4,19 +4,35 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/ {
-	chosen {
-		zephyr,bt-uart=&uart2;
-	};
+ &uart2 {
+    compatible = "nordic,nrf-uarte";
+    current-speed = <1000000>;
+    status = "okay";
+    tx-pin = <24>;
+    rx-pin = <23>;
+    /delete-property/ rts-pin;
+    /delete-property/ cts-pin;
 
+    lpuart: nrf-sw-lpuart {
+        compatible = "nordic,nrf-sw-lpuart";
+        status = "okay";
+        label = "LPUART";
+        req-pin = <0>; /* <&interface_to_nrf52840 3 0>; */
+        rdy-pin = <30>; /* <&interface_to_nrf52840 2 0>; */
+    };
 };
 
-&uart2 {
-	compatible = "nordic,nrf-uarte";
-	current-speed = <1000000>;
-	status = "okay";
-	tx-pin = <24>;
-	rx-pin = <23>;
-	rts-pin = <29>;
-	cts-pin = <30>;
+/delete-node/ &uart1;
+
+/ {
+    chosen {
+        zephyr,bt-uart=&lpuart;
+    };
+
+    /* Reset control */
+    nrf52_reset: gpio-reset {
+        compatible = "circuitdojo,gpio-reset";
+        status = "okay";
+        gpios = <&gpio0 4 GPIO_ACTIVE_LOW>;
+    };
 };

@@ -13,34 +13,38 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(app);
 
-/*
- * Devicetree helper macro which gets the 'flags' cell from a 'gpios'
- * property, or returns 0 if the property has no 'flags' cell.
- */
-
 #define FLAGS_OR_ZERO(node)                          \
     COND_CODE_1(DT_PHA_HAS_CELL(node, gpios, flags), \
                 (DT_GPIO_FLAGS(node, gpios)),        \
                 (0))
 
-/*
-  * The led0 devicetree alias is optional. If present, we'll use it
-  * to turn on the LED whenever the button is pressed.
-  */
-
 #define LED0_NODE DT_ALIAS(led0)
+#define SW0_NODE DT_ALIAS(sw0)
 
-#if DT_NODE_HAS_STATUS(LED0_NODE, okay) && DT_NODE_HAS_PROP(LED0_NODE, gpios)
 #define LED0_GPIO_LABEL DT_GPIO_LABEL(LED0_NODE, gpios)
 #define LED0_GPIO_PIN DT_GPIO_PIN(LED0_NODE, gpios)
 #define LED0_GPIO_FLAGS (GPIO_OUTPUT | FLAGS_OR_ZERO(LED0_NODE))
-#endif
+
+#define SW0_GPIO_LABEL DT_GPIO_LABEL(SW0_NODE, gpios)
+#define SW0_GPIO_PIN DT_GPIO_PIN(SW0_NODE, gpios)
+#define SW0_GPIO_FLAGS (GPIO_INPUT | FLAGS_OR_ZERO(SW0_NODE))
+
+/* Work function */
+static struct k_work erase_bonds_work;
 
 static void my_expiry_function(struct k_timer *timer);
 K_TIMER_DEFINE(my_timer, my_expiry_function, NULL);
 
+static struct gpio_callback button_cb_data;
+
 char count[10];
 int tx_counter = 0;
+
+static void erase_bonds_work_fn()
+{
+    /* Erase bonds */
+    ble_erase_bonds();
+}
 
 static void my_expiry_function(struct k_timer *timer)
 {
@@ -59,7 +63,7 @@ void evt_cb(char *name, char *data)
     LOG_INF("\"%s\" \"%s\"", log_strdup(name), log_strdup(data));
 }
 
-static struct device *led;
+static const struct device *led;
 
 void led_init(void)
 {
@@ -68,17 +72,65 @@ void led_init(void)
     led = device_get_binding(LED0_GPIO_LABEL);
     if (led == NULL)
     {
-        printk("Didn't find LED device %s\n", LED0_GPIO_LABEL);
+        LOG_ERR("Didn't find LED device %s\n", LED0_GPIO_LABEL);
         return;
     }
 
     ret = gpio_pin_configure(led, LED0_GPIO_PIN, LED0_GPIO_FLAGS);
     if (ret != 0)
     {
-        printk("Error %d: failed to configure LED device %s pin %d\n",
-               ret, LED0_GPIO_LABEL, LED0_GPIO_PIN);
+        LOG_ERR("Error %d: failed to configure LED device %s pin %d\n",
+                ret, LED0_GPIO_LABEL, LED0_GPIO_PIN);
         return;
     }
+}
+
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+                    uint32_t pins)
+{
+    LOG_DBG("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
+
+    k_work_submit(&erase_bonds_work);
+}
+
+void button_init()
+{
+
+    const struct device *button;
+    int ret;
+
+    button = device_get_binding(SW0_GPIO_LABEL);
+    if (button == NULL)
+    {
+        LOG_ERR("Error: didn't find %s device\n", SW0_GPIO_LABEL);
+        return;
+    }
+
+    ret = gpio_pin_configure(button, SW0_GPIO_PIN, SW0_GPIO_FLAGS);
+    if (ret != 0)
+    {
+        LOG_ERR("Error %d: failed to configure %s pin %d\n",
+                ret, SW0_GPIO_LABEL, SW0_GPIO_PIN);
+        return;
+    }
+
+    ret = gpio_pin_interrupt_configure(button,
+                                       SW0_GPIO_PIN,
+                                       GPIO_INT_EDGE_TO_ACTIVE);
+    if (ret != 0)
+    {
+        printk("Error %d: failed to configure interrupt on %s pin %d\n",
+               ret, SW0_GPIO_LABEL, SW0_GPIO_PIN);
+        return;
+    }
+
+    gpio_init_callback(&button_cb_data, button_pressed, BIT(SW0_GPIO_PIN));
+    gpio_add_callback(button, &button_cb_data);
+}
+
+static void raw_evt_handler(pyrinas_event_t *evt)
+{
+    LOG_INF("evt name: %s", log_strdup(evt->name.bytes));
 }
 
 void setup(void)
@@ -89,6 +141,12 @@ void setup(void)
     /* LED init */
     led_init();
 
+    /* Button init */
+    button_init();
+
+    /* Work init */
+    k_work_init(&erase_bonds_work, erase_bonds_work_fn);
+
     // Default config for central mode
     BLE_STACK_CENTRAL_DEF(init);
 
@@ -97,6 +155,9 @@ void setup(void)
 
     // Subscribe
     ble_subscribe("pong", evt_cb);
+
+    /* Raw evt handler */
+    ble_subscribe_raw(raw_evt_handler);
 
     // Start message timer
     k_timer_start(&my_timer, K_SECONDS(1), K_NO_WAIT);

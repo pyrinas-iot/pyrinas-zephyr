@@ -7,7 +7,6 @@
 if (CONFIG_PYRINAS_BLUETOOTH_ENABLED)
 zephyr_library()
 zephyr_library_sources(
-  app/app_weak.c
   ble/ble_m.c
 )
 
@@ -17,6 +16,7 @@ endif()
 
 if (CONFIG_PYRINAS_CENTRAL_ENABLED)
 zephyr_library_sources(ble/ble_central.c)
+zephyr_library_sources(ble/services/pyrinas_client.c)
 endif()
 
 endif()

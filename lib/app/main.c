@@ -11,13 +11,17 @@
 #include <settings/settings.h>
 #include <drivers/counter.h>
 #include <ble/ble_m.h>
+
+#if defined(CONFIG_NRF_MODEM_LIB)
 #include <modem/lte_lc.h>
 #include <modem/nrf_modem_lib.h>
-
 #include <modem/at_cmd.h>
 #include <modem/at_notif.h>
-#include <power/reboot.h>
+
 #include <dfu/mcuboot.h>
+#endif
+
+#include <power/reboot.h>
 #include <app/app.h>
 #include <worker/worker.h>
 #include <ota/cert.h>
