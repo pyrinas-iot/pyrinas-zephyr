@@ -27,12 +27,12 @@
 #define BLE_INCOMING_PROTOBUF_SIZE 168
 
 // Variable data element
-typedef struct
+struct ble_fifo_data
 {
   void *fifo_reserved;
   char data[BLE_QUEUE_ITEM_SIZE];
   uint16_t len;
-} ble_fifo_data_t;
+};
 
 #define BLE_SETTINGS_MAX_CONNECTIONS 12
 #define BLE_SETTINGS_MAX_SUBSCRIPTIONS 12

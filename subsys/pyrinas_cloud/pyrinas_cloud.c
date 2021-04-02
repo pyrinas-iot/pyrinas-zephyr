@@ -985,7 +985,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
              evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
              evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
 
-    LOG_INF("Sending from [%s] %s.", log_strdup(uid), log_strdup(evt->name.bytes));
+    LOG_DBG("Sending from [%s] %s.", log_strdup(uid), log_strdup(evt->name.bytes));
 
     /* Create topic */
     snprintf(topic, sizeof(topic),
@@ -1000,9 +1000,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
         LOG_WRN("Unable to publish. Err: %i", err);
     }
 
-    /* Publish telemetry */
-    /* TODO: don't do this every message... */
-    return pyrinas_cloud_publish_telemetry_evt(evt);
+    return err;
 }
 
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)

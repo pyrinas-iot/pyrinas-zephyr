@@ -56,16 +56,6 @@ extern "C"
 	 */
         uint8_t (*received)(const uint8_t *data, uint16_t len);
 
-        /** @brief Data sent callback.
-	 *
-	 * The data has been sent and written to the PYRINAS RX Characteristic.
-	 *
-	 * @param[in] err ATT error code.
-	 * @param[in] data Transmitted data.
-	 * @param[in] len Length of transmitted data.
-	 */
-        void (*sent)(void *ctx, uint8_t err, const uint8_t *data, uint16_t len);
-
         /** @brief Data notifications disabled callback.
 	 *
 	 * Data notifications have been disabled.
@@ -90,9 +80,6 @@ extern "C"
 
         /** GATT subscribe parameters for PYRINAS data Characteristic. */
         struct bt_gatt_subscribe_params notif_params;
-
-        /** GATT write parameters for PYRINAS data Characteristic. */
-        struct bt_gatt_write_params write_params;
 
         /** Application callbacks. */
         struct bt_pyrinas_client_cb cb;
@@ -168,6 +155,9 @@ extern "C"
  *           Otherwise, a negative error code is returned.
  */
     int bt_pyrinas_subscribe_receive(struct bt_pyrinas_client *pyrinas);
+
+    /* Check if busy.. */
+    bool bt_pyrinas_client_is_busy(struct bt_pyrinas_client *pyrinas_c);
 
 #ifdef __cplusplus
 }

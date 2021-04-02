@@ -29,15 +29,12 @@ LOG_MODULE_REGISTER(ble_central);
 /* Struct def */
 struct ble_c_connection
 {
-    /* Tracking valid/active connection*/
-    atomic_t ready;
-
     /* Conn tracking */
     struct bt_conn *conn;
 
     /* Queue related*/
     struct k_msgq q;
-    char __aligned(4) q_buf[BLE_CENTRAL_QUEUE_SIZE * sizeof(ble_fifo_data_t)];
+    char __aligned(4) q_buf[BLE_CENTRAL_QUEUE_SIZE * sizeof(struct ble_fifo_data)];
 
     /* Pyrinas Client */
     struct bt_pyrinas_client pyrinas_client;
@@ -74,24 +71,28 @@ static void bt_send_work_handler(struct k_work *work)
 
     bool schedule_work = false;
 
+    static struct ble_fifo_data ble_payload;
+
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
 
         // Check for invalid connection
-        if (!(atomic_get(&m_conns[i].ready) == 1) ||
-            m_conns[i].conn == NULL ||
+        if (m_conns[i].conn == NULL ||
             k_msgq_num_used_get(&m_conns[i].q) == 0)
         {
             continue;
         }
 
-        LOG_DBG("%d: ready!", i);
-
-        // Static event
-        static ble_fifo_data_t ble_payload;
+        /* Check if busy */
+        if (bt_pyrinas_client_is_busy(&m_conns[i].pyrinas_client))
+        {
+            LOG_DBG("Failed to send. Pyrinas Client busy.");
+            schedule_work = true;
+            break;
+        }
 
         // Get the latest item
-        err = k_msgq_get(&m_conns[i].q, &ble_payload, K_NO_WAIT);
+        err = k_msgq_peek(&m_conns[i].q, &ble_payload);
         if (err)
         {
             LOG_WRN("%d Unable to get data from queue", i);
@@ -103,18 +104,41 @@ static void bt_send_work_handler(struct k_work *work)
         err = bt_pyrinas_client_send(&m_conns[i].pyrinas_client, ble_payload.data, ble_payload.len);
         if (err)
         {
-            LOG_ERR("Failed to send data over BLE connection"
-                    "(err %d)",
-                    err);
-        }
+            if (err == -EALREADY)
+            {
+                LOG_DBG("Failed to send. Pyrinas Client busy.");
+            }
+            else
+            {
+                LOG_ERR("Failed to send data over BLE connection"
+                        "(err %d)",
+                        err);
+            }
 
-        LOG_DBG("%d: msg send!", i);
+            /* Schedule work */
+            schedule_work = true;
+
+            /*Break from for loop. Device is busy..*/
+            break;
+        }
+        else
+        {
+            /* Success! Let's remove it now.. */
+            struct ble_fifo_data temp;
+            k_msgq_get(&m_conns[i].q, &temp, K_NO_WAIT);
+
+            /* Still more data? Schedule work.*/
+            if (k_msgq_num_used_get(&m_conns[i].q) > 0)
+            {
+                /* Schedule work */
+                schedule_work = true;
+            }
+        }
     }
 
-    // Schedule work to get this done
     if (schedule_work)
     {
-        k_delayed_work_submit(&bt_send_work, K_MSEC(10));
+        k_delayed_work_submit(&bt_send_work, K_MSEC(50));
     }
 }
 
@@ -255,7 +279,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     {
 
         // Check to make sure there's at least one active connection
-        if (atomic_get(&m_conns[i].ready) == 1)
+        if (m_conns[i].conn != NULL)
         {
             ready = true;
             break;
@@ -275,7 +299,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
         return;
     }
 
-    ble_fifo_data_t evt;
+    struct ble_fifo_data evt;
 
     // Copy over data to struct
     memcpy(evt.data, data, len);
@@ -285,8 +309,10 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
         // Queue if ready
-        if (m_conns[i].ready)
+        if (m_conns[i].conn != NULL)
         {
+            LOG_DBG("Queing to connection %d", i);
+
             // Add struct to queue
             int err = k_msgq_put(&m_conns[i].q, &evt, K_NO_WAIT);
             if (err)
@@ -359,7 +385,6 @@ static void discovery_completed(struct bt_gatt_dm *dm, void *context)
             found = true;
 
             // Set to ready
-            atomic_set(&m_conns[i].ready, 1);
             atomic_inc(&m_num_connected);
 
             break;
@@ -448,6 +473,7 @@ void ble_central_scan_start()
         LOG_WRN("Scanning failed to start, err %d", err);
         atomic_set(&scan_failure, 1);
 
+        /* TODO: determine if this is needed */
         // k_delayed_work_submit(&bt_start_scan_work, K_SECONDS(1));
         return;
     }
@@ -482,7 +508,6 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
         k_msgq_purge(&m_conns[i].q);
 
         // Reset ready flag
-        atomic_set(&m_conns[i].ready, 0);
         atomic_dec(&m_num_connected);
 
         // Set this flag to start adv at the end
@@ -534,10 +559,6 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
         LOG_ERR("Failed to set security: %d", err);
         gatt_discover(conn);
     }
-
-    // Stop scanning
-    // TODO: only stop when all devices have been found..
-    bt_scan_stop();
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
@@ -580,35 +601,6 @@ static struct bt_conn_cb conn_callbacks = {
     .disconnected = disconnected,
     .security_changed = security_changed};
 
-static void ble_data_sent(void *ctx, uint8_t err, const uint8_t *const data, uint16_t len)
-{
-
-    bool has_work = false;
-
-    LOG_DBG("ble data sent!");
-
-    // See which connection this belongs to
-    for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
-    {
-
-        // Find the nus_c struct by the context
-        if (&m_conns[i].pyrinas_client == ctx)
-        {
-
-            if (k_msgq_num_used_get(&m_conns[i].q))
-            {
-                has_work = true;
-            }
-
-            break;
-        }
-    }
-
-    // Check if there's more work to do
-    if (has_work)
-        k_delayed_work_submit(&bt_send_work, K_NO_WAIT);
-}
-
 static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 {
 
@@ -624,7 +616,6 @@ static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 struct bt_pyrinas_client_init_param pyrinas_client_init_obj = {
     .cb = {
         .received = ble_data_received,
-        .sent = ble_data_sent,
     }};
 
 void ble_central_ready(void)
@@ -683,11 +674,12 @@ int ble_central_init(ble_central_init_t *p_init)
 
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
-        // Set the active atomic var to 0
-        atomic_set(&m_conns[i].ready, 0);
+
+        /* Set conn to NULL*/
+        m_conns[i].conn = NULL;
 
         // Init the msgq
-        k_msgq_init(&m_conns[i].q, m_conns[i].q_buf, sizeof(ble_fifo_data_t), BLE_CENTRAL_QUEUE_SIZE);
+        k_msgq_init(&m_conns[i].q, m_conns[i].q_buf, sizeof(struct ble_fifo_data), BLE_CENTRAL_QUEUE_SIZE);
     }
 
     /* Callbacks for conection status */
@@ -708,7 +700,7 @@ bool ble_central_is_connected()
     bool ready = false;
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
-        if (atomic_get(&m_conns[i].ready) == 1)
+        if (m_conns[i].conn != NULL)
         {
             ready = true;
             break;

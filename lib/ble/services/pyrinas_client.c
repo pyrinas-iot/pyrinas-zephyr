@@ -21,6 +21,9 @@ enum
     PYRINAS_C_WRITE_PENDING
 };
 
+/** State for allowing only one write at a time.. */
+static atomic_t m_state;
+
 static uint8_t on_received(struct bt_conn *conn,
                            struct bt_gatt_subscribe_params *params,
                            const void *data, uint16_t length)
@@ -51,25 +54,10 @@ static uint8_t on_received(struct bt_conn *conn,
     return BT_GATT_ITER_CONTINUE;
 }
 
-static void on_sent(struct bt_conn *conn, uint8_t err,
-                    struct bt_gatt_write_params *params)
+static void on_sent(struct bt_conn *conn, void *user_data)
 {
-    struct bt_pyrinas_client *pyrinas_c;
-    const void *data;
-    uint16_t length;
-
-    /* Retrieve PYRINAS Client module context. */
-    pyrinas_c = CONTAINER_OF(params, struct bt_pyrinas_client, write_params);
-
-    /* Make a copy of volatile data that is required by the callback. */
-    data = params->data;
-    length = params->length;
-
-    atomic_clear_bit(&pyrinas_c->state, PYRINAS_C_WRITE_PENDING);
-    if (pyrinas_c->cb.sent)
-    {
-        pyrinas_c->cb.sent(conn, err, data, length);
-    }
+    /* Clear the state */
+    atomic_clear_bit(&m_state, PYRINAS_C_WRITE_PENDING);
 }
 
 int bt_pyrinas_client_init(struct bt_pyrinas_client *pyrinas_c,
@@ -90,6 +78,11 @@ int bt_pyrinas_client_init(struct bt_pyrinas_client *pyrinas_c,
     return 0;
 }
 
+bool bt_pyrinas_client_is_busy(struct bt_pyrinas_client *pyrinas_c)
+{
+    return atomic_test_bit(&m_state, PYRINAS_C_WRITE_PENDING);
+}
+
 int bt_pyrinas_client_send(struct bt_pyrinas_client *pyrinas_c, const uint8_t *data,
                            uint16_t len)
 {
@@ -100,21 +93,21 @@ int bt_pyrinas_client_send(struct bt_pyrinas_client *pyrinas_c, const uint8_t *d
         return -ENOTCONN;
     }
 
-    if (atomic_test_and_set_bit(&pyrinas_c->state, PYRINAS_C_WRITE_PENDING))
+    if (atomic_test_and_set_bit(&m_state, PYRINAS_C_WRITE_PENDING))
     {
         return -EALREADY;
     }
 
-    pyrinas_c->write_params.func = on_sent;
-    pyrinas_c->write_params.handle = pyrinas_c->handles.data;
-    pyrinas_c->write_params.offset = 0;
-    pyrinas_c->write_params.data = data;
-    pyrinas_c->write_params.length = len;
-
-    err = bt_gatt_write(pyrinas_c->conn, &pyrinas_c->write_params);
+    /* Don't care about responses */
+    err = bt_gatt_write_without_response_cb(pyrinas_c->conn,
+                                            pyrinas_c->handles.data, data,
+                                            len, false, on_sent,
+                                            NULL);
     if (err)
     {
-        atomic_clear_bit(&pyrinas_c->state, PYRINAS_C_WRITE_PENDING);
+        atomic_clear_bit(&m_state, PYRINAS_C_WRITE_PENDING);
+
+        LOG_ERR("Unable to write without rsp. Code: %i", err);
     }
 
     return err;
