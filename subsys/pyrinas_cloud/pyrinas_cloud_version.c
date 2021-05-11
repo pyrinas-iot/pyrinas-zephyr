@@ -9,7 +9,7 @@ const union pyrinas_cloud_ota_version pyrinas_version = {
     .minor = CONFIG_PYRINAS_APP_VERSION_MINOR,
     .patch = CONFIG_PYRINAS_APP_VERSION_PATCH,
     .commit = CONFIG_PYRINAS_APP_VERSION_COMMIT,
-    .hash = STRINGIFY(CONFIG_PYRINAS_APP_VERSION_HASH),
+    .hash = CONFIG_PYRINAS_APP_VERSION_HASH,
 };
 
 int get_version_string(uint8_t *p_buf, const size_t size)
