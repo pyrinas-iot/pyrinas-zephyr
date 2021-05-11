@@ -303,9 +303,9 @@ void main(void)
 #endif
 
 #if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
-
-	/* Setup Bluetooth */
-	BLE_STACK_CENTRAL_DEF(bt_init);
+	ble_stack_init_t bt_init = {
+		.mode = ble_mode_central,
+	};
 
 	/* BLE initialization */
 	ble_stack_init(&bt_init);

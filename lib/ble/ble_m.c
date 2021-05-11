@@ -377,8 +377,7 @@ static int subscriber_search(pyrinas_event_name_data_t *event_name)
     return -1;
 }
 
-/* TODO: Deleting devices from Whitelist */
-
+/* Deleting devices from Whitelist */
 void ble_erase_bonds(void)
 {
     k_work_submit(&bt_erase_bonds_work);

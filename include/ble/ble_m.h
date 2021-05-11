@@ -48,16 +48,12 @@ typedef enum
 typedef struct
 {
   ble_mode_t mode;
-  bool long_range;
   union
   {
-    ble_central_init_t central_config;
+    ble_central_config_t central_config;
   };
 
 } ble_stack_init_t;
-
-#define BLE_STACK_PERIPH_DEF(X) ble_stack_init_t X = {.mode = ble_mode_peripheral, .long_range = true}
-#define BLE_STACK_CENTRAL_DEF(X) ble_stack_init_t X = {.mode = ble_mode_central, .long_range = true}
 
 /**@brief Function for terminating connection with a BLE peripheral device.
  */

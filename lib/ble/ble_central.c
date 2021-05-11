@@ -41,7 +41,8 @@ struct ble_c_connection
 };
 
 /* Used to track connection */
-static atomic_t m_num_connected;
+static atomic_t m_num_connected = ATOMIC_INIT(0);
+static atomic_t m_force_disconnect = ATOMIC_INIT(0);
 static struct ble_c_connection m_conns[CONFIG_BT_MAX_CONN];
 
 /* Static local handlers */
@@ -55,7 +56,7 @@ static void bt_start_scan_work_handler(struct k_work *work);
 static struct k_delayed_work bt_start_scan_work;
 
 /* Storing static config*/
-static ble_central_init_t m_config;
+static ble_central_config_t m_config;
 
 /* Track scan failure */
 static atomic_t scan_failure;
@@ -171,8 +172,13 @@ static void scan_filter_match(struct bt_scan_device_info *device_info,
     err = bt_conn_le_create(device_info->recv_info->addr, create_params, BT_LE_CONN_PARAM_DEFAULT, &conn);
     if (err)
     {
-        LOG_ERR("Unable to connect to device!");
-        // TODO: restart scan
+        LOG_ERR("Unable to connect to device! Err: %i", err);
+
+        /* Start scanning if we're < max connections */
+        if (atomic_get(&m_num_connected) < m_config.device_count)
+        {
+            ble_central_scan_start();
+        }
     }
     else
     {
@@ -184,13 +190,61 @@ static void scan_filter_match(struct bt_scan_device_info *device_info,
 BT_SCAN_CB_INIT(scan_cb, scan_filter_match, NULL,
                 NULL, NULL);
 
-static void ble_central_scan_init(void)
+static int ble_central_scan_set_filters(void)
 {
     int err;
 
-    // Active scanning with phy coded enabled
+    /* Remove filters first */
+    bt_scan_filter_remove_all();
+
+    // Add a filter
+    err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_NAME, CONFIG_BT_DEVICE_NAME);
+    if (err)
+    {
+        LOG_WRN("Scanning filters cannot be set. Err: %d", err);
+        return err;
+    }
+
+    /* Loop through all potential device IDs  and add those filters */
+    for (int i = 0; i < m_config.device_count; i++)
+    {
+
+        err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_ADDR, &m_config.addr[i]);
+        if (err)
+        {
+            LOG_WRN("Scanning filters cannot be set. Err: %d", err);
+            return err;
+        }
+    }
+
+    /* Enable all filters */
+    err = bt_scan_filter_enable(BT_SCAN_NAME_FILTER, true);
+    if (err)
+    {
+        LOG_WRN("Filters cannot be turned on. Err: %d", err);
+        return err;
+    }
+
+    /* Enable the address fileter only if there are devices! */
+    if (m_config.device_count > 0)
+    {
+        err = bt_scan_filter_enable(BT_SCAN_ADDR_FILTER, false);
+        if (err)
+        {
+            LOG_WRN("Filters cannot be turned on. Err: %d", err);
+            return err;
+        }
+    }
+
+    return 0;
+}
+
+static void ble_central_scan_init(void)
+{
+
+    // Passive scanning with phy coded enabled
     struct bt_le_scan_param scan_param = {
-        .type = BT_LE_SCAN_TYPE_ACTIVE,
+        .type = BT_LE_SCAN_TYPE_PASSIVE,
         .options = BT_LE_SCAN_OPT_CODED | BT_LE_SCAN_OPT_NO_1M,
         .interval = BT_GAP_SCAN_FAST_INTERVAL,
         .window = BT_GAP_SCAN_FAST_WINDOW,
@@ -207,23 +261,6 @@ static void ble_central_scan_init(void)
     // Init scanning
     bt_scan_init(&scan_init);
     bt_scan_cb_register(&scan_cb);
-
-    // Add a filter
-    // TODO: loop through all potential device IDs  and add those filters
-    err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_NAME, CONFIG_BT_DEVICE_NAME);
-    if (err)
-    {
-        LOG_WRN("Scanning filters cannot be set. Err: %d", err);
-        return;
-    }
-
-    // Enable said filter
-    err = bt_scan_filter_enable(BT_SCAN_NAME_FILTER, false);
-    if (err)
-    {
-        LOG_WRN("Filters cannot be turned on. Err: %d", err);
-        return;
-    }
 }
 
 static void auth_cancel(struct bt_conn *conn)
@@ -397,7 +434,7 @@ finish:
     bt_gatt_dm_data_release(dm);
 
     // Start scanning if we're < max connections
-    if (atomic_get(&m_num_connected) < CONFIG_BT_MAX_CONN)
+    if (atomic_get(&m_num_connected) < m_config.device_count)
     {
         ble_central_scan_start();
     }
@@ -463,7 +500,14 @@ static void gatt_discover(struct bt_conn *conn)
 
 void ble_central_scan_start()
 {
-    int err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
+
+    LOG_INF("Scan start!");
+
+    /* Force disconnect*/
+    if (atomic_get(&m_force_disconnect) == 1)
+        return;
+
+    int err = bt_scan_start(BT_LE_SCAN_TYPE_PASSIVE);
     if (err == -EALREADY)
     {
         atomic_set(&scan_failure, 0);
@@ -632,8 +676,6 @@ void ble_central_ready(void)
             return;
         }
     }
-
-    ble_central_scan_start();
 }
 
 void ble_central_attach_handler(encoded_data_handler_t evt_cb)
@@ -641,7 +683,7 @@ void ble_central_attach_handler(encoded_data_handler_t evt_cb)
     m_evt_cb = evt_cb;
 }
 
-int ble_central_init(ble_central_init_t *p_init)
+int ble_central_init(ble_central_config_t *p_init)
 {
 
     LOG_INF("ble_central_init");
@@ -709,6 +751,43 @@ bool ble_central_is_connected()
 
     // Returns true if connected
     return ready;
+}
+
+void ble_central_set_whitelist(ble_central_config_t *config)
+{
+    int err;
+
+    atomic_set(&m_force_disconnect, 1);
+
+    /* Stop scanning */
+    err = bt_scan_stop();
+    if (err && (err != -EALREADY))
+    {
+        LOG_ERR("Stop LE scan failed (err %d)", err);
+    }
+
+    /* Disconnect from all */
+    for (int i = 0; i < atomic_get(&m_num_connected); i++)
+    {
+        force_disconnect(m_conns[i].conn);
+    }
+
+    /*Set devices by copying*/
+    m_config = *config;
+
+    LOG_INF("Device count: %d", m_config.device_count);
+
+    atomic_set(&m_force_disconnect, 0);
+
+    /* Initialize scanning filters */
+    err = ble_central_scan_set_filters();
+    if (err)
+    {
+        LOG_ERR("Unable to set scan filters!");
+    }
+
+    /* Start scan with new filters.. */
+    ble_central_scan_start();
 }
 
 #endif

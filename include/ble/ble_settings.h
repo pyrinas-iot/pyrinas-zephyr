@@ -34,7 +34,6 @@ struct ble_fifo_data
   uint16_t len;
 };
 
-#define BLE_SETTINGS_MAX_CONNECTIONS 12
 #define BLE_SETTINGS_MAX_SUBSCRIPTIONS 12
 
 #endif
