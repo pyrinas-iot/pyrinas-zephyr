@@ -7,6 +7,8 @@
 menu "Pyrinas Cloud"
 
 config PYRINAS_CLOUD_ENABLED
+	select MQTT_LIB
+	select MQTT_LIB_TLS
 	bool "Enable Pyrinas MQTT Cloud"
 	help
 		This option enables Pyrinas Cloud functions.
@@ -88,6 +90,26 @@ config PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT
 config PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE
 	int "Max size of the callback name."
 	default 16
+
+config PYRINAS_APP_VERSION_MAJOR
+	int "Major verison number"
+	default 1
+
+config PYRINAS_APP_VERSION_MINOR
+	int "Minor verison number"
+	default 0
+
+config PYRINAS_APP_VERSION_PATCH
+	int "Patch verison number"
+	default 0
+
+config PYRINAS_APP_VERSION_COMMIT
+	int "Commit verison number"
+	default 0
+
+config PYRINAS_APP_VERSION_HASH
+	string "Version hash provided by Git"
+	default ""
 
 endif
 
