@@ -25,10 +25,6 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(pyrinas_cloud);
 
-#if !defined(CONFIG_MQTT_LIB_TLS)
-#error CONFIG_MQTT_LIB_TLS must be defined!
-#endif /* defined(CONFIG_MQTT_LIB_TLS) */
-
 static void telemetry_check_event(struct k_timer *timer);
 K_TIMER_DEFINE(telemetry_timer, telemetry_check_event, NULL);
 
@@ -45,6 +41,7 @@ static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
 static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
 static uint8_t tx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
 static uint8_t payload_buf[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
+static uint8_t topic_buf[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
 
 /* IMEI storage */
 #define CGSN_RESP_LEN 19
@@ -91,8 +88,7 @@ static struct pyrinas_cloud_ota_data ota_data;
 pryinas_cloud_application_cb_entry_t *callbacks[CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT];
 
 /* Cloud state callbacks */
-static pyrinas_cloud_ota_state_evt_t ota_state_callback = NULL;
-static pyrinas_cloud_state_evt_t cloud_state_callback = NULL;
+static struct pyrinas_cloud_config m_config;
 
 /* Statically track message id*/
 static uint16_t ota_sub_message_id = 0;
@@ -431,8 +427,12 @@ static void fota_start_fn(struct k_work *unused)
         atomic_set(&ota_state_s, ota_state_error);
 
         /* Send to calback */
-        if (ota_state_callback)
-            ota_state_callback(ota_state_s);
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_ERROR,
+                                            .data.err = err};
+            m_config.evt_cb(&evt);
+        }
 
         /* Reboot on error.. */
         sys_reboot(0);
@@ -443,12 +443,15 @@ static void fota_start_fn(struct k_work *unused)
     atomic_set(&ota_state_s, ota_state_downloading);
 
     /* Send to calback */
-    if (ota_state_callback)
-        ota_state_callback(ota_state_s);
+    if (m_config.evt_cb)
+    {
+        struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_DOWNLOADING};
+        m_config.evt_cb(&evt);
+    }
 #endif
 }
 
-static void publish_evt_handler(const char *topic, size_t topic_len, const char *data, size_t data_len)
+static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_t data_len)
 {
     int result = 0;
 
@@ -492,9 +495,10 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             atomic_set(&ota_state_s, ota_state_started);
 
             /* Send to calback */
-            if (ota_state_callback)
+            if (m_config.evt_cb)
             {
-                ota_state_callback(ota_state_s);
+                struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_START};
+                m_config.evt_cb(&evt);
             }
 
             /* Start upgrade here*/
@@ -510,15 +514,25 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             {
                 LOG_INF("Ota ready.");
 
+                /* Send to calback */
+                if (m_config.evt_cb)
+                {
+                    struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_READY};
+                    m_config.evt_cb(&evt);
+                }
+
                 /* Let the backend know we're done */
                 k_work_submit(&ota_done_work);
 
                 /* Subscribe to Application topic */
                 subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
 
-                /* Callback to main to notify complete */
-                if (ota_state_callback)
-                    ota_state_callback(ota_state_s);
+                /* Send to calback */
+                if (m_config.evt_cb)
+                {
+                    struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_DONE};
+                    m_config.evt_cb(&evt);
+                }
             }
         }
 
@@ -543,6 +557,20 @@ static void publish_evt_handler(const char *topic, size_t topic_len, const char 
             break;
         }
     }
+
+    /* Send to calback */
+    if (m_config.evt_cb)
+    {
+        struct pyrinas_cloud_evt evt = {
+            .type = PYRINAS_CLOUD_EVT_DATA_RECIEVED,
+            .data = {
+                .msg = {
+                    .data = data,
+                    .data_len = data_len,
+                    .topic = topic,
+                    .topic_len = topic_len}}};
+        m_config.evt_cb(&evt);
+    }
 }
 
 /**@brief MQTT client event handler
@@ -563,8 +591,12 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             atomic_set(&cloud_state_s, cloud_state_disconnected);
 
             /* Send to calback */
-            if (cloud_state_callback)
-                cloud_state_callback(cloud_state_s);
+            if (m_config.evt_cb)
+            {
+                struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_DISCONNECTED};
+                m_config.evt_cb(&evt);
+            }
+
             break;
         }
 
@@ -593,8 +625,11 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         atomic_set(&initial_ota_check, 0);
 
         /* Send to calback */
-        if (cloud_state_callback)
-            cloud_state_callback(cloud_state_s);
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_DISCONNECTED};
+            m_config.evt_cb(&evt);
+        }
 
         break;
 
@@ -602,13 +637,23 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
     {
         const struct mqtt_publish_param *p = &evt->param.publish;
 
+        /* Make sure the topic fits.*/
+        if (p->message.topic.topic.size > sizeof(topic_buf))
+        {
+            LOG_WRN("Incoming topic is too large!");
+            break;
+        }
+
+        memcpy(topic_buf, p->message.topic.topic.utf8, p->message.topic.topic.size);
+
         LOG_DBG("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d", __func__,
                 __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
         err = publish_get_payload(c, payload_buf, p->message.payload.len);
         if (err >= 0)
         {
+
             /* Handle the event */
-            publish_evt_handler(p->message.topic.topic.utf8, p->message.topic.topic.size, payload_buf, p->message.payload.len);
+            publish_evt_handler(topic_buf, p->message.topic.topic.size, payload_buf, p->message.payload.len);
         }
         else
         {
@@ -742,15 +787,18 @@ static void reboot_work_fn(struct k_work *unused)
 
     LOG_DBG("Reboot work fn\n");
 
-    /* Rebooooot */
-    sys_reboot(0);
-
     /* Rebooting state */
     atomic_set(&ota_state_s, ota_state_rebooting);
 
     /* Send to calback */
-    if (ota_state_callback)
-        ota_state_callback(ota_state_s);
+    if (m_config.evt_cb)
+    {
+        struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_REBOOTING};
+        m_config.evt_cb(&evt);
+    }
+
+    /* Rebooooot */
+    sys_reboot(0);
 }
 
 static void ota_done_work_fn(struct k_work *unused)
@@ -814,10 +862,10 @@ static int client_init(struct mqtt_client *client, char *p_client_id, size_t cli
 }
 
 #ifdef CONFIG_FOTA_DOWNLOAD
-static void fota_evt(const struct fota_download_evt *evt)
+static void fota_evt(const struct fota_download_evt *p_evt)
 {
 
-    switch (evt->id)
+    switch (p_evt->id)
     {
     case FOTA_DOWNLOAD_EVT_ERROR:
         LOG_INF("Received error from fota_download\n");
@@ -826,8 +874,12 @@ static void fota_evt(const struct fota_download_evt *evt)
         atomic_set(&ota_state_s, ota_state_error);
 
         /* Send to calback */
-        if (ota_state_callback)
-            ota_state_callback(ota_state_s);
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_ERROR,
+                                            .data.err = (int)p_evt->cause};
+            m_config.evt_cb(&evt);
+        }
 
         /* Reboot work start */
         k_work_submit(&ota_reboot_work);
@@ -840,8 +892,11 @@ static void fota_evt(const struct fota_download_evt *evt)
         atomic_set(&ota_state_s, ota_state_done);
 
         /* Send to calback */
-        if (ota_state_callback)
-            ota_state_callback(ota_state_s);
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_DONE};
+            m_config.evt_cb(&evt);
+        }
 
         /* Reboot work start */
         k_work_submit(&ota_reboot_work);
@@ -888,17 +943,17 @@ int pyrinas_cloud_disconnect()
     return 0;
 }
 
-void pyrinas_cloud_init(pyrinas_cloud_ota_state_evt_t cb)
+void pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 {
 
     /*Set the callback*/
-    ota_state_callback = cb;
+    m_config = *p_config;
 
     /* Get the IMEI */
     get_imei(imei, sizeof(imei));
 
     /* Print the IMEI */
-    LOG_INF("IMEI: %s", imei);
+    LOG_DBG("IMEI: %s", imei);
 
 /* Init FOTA client */
 #ifdef CONFIG_FOTA_DOWNLOAD
@@ -1017,11 +1072,6 @@ int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
     return data_publish(topic, strlen(topic), data, len, sys_rand32_get());
 }
 
-void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb)
-{
-    cloud_state_callback = cb;
-}
-
 void pyrinas_cloud_poll(void)
 {
     int err;
@@ -1047,8 +1097,11 @@ start:
         LOG_ERR("mqtt_connect %d", err);
 
         /* Send to calback */
-        if (cloud_state_callback)
-            cloud_state_callback(cloud_state_s);
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_DISCONNECTED};
+            m_config.evt_cb(&evt);
+        }
 
         goto reset;
     }
@@ -1061,8 +1114,11 @@ start:
     atomic_set(&cloud_state_s, cloud_state_connected);
 
     /* Send to calback */
-    if (cloud_state_callback)
-        cloud_state_callback(cloud_state_s);
+    if (m_config.evt_cb)
+    {
+        struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_CONNECTED};
+        m_config.evt_cb(&evt);
+    }
 
     while (true)
     {

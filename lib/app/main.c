@@ -201,34 +201,22 @@ int pyrinas_cloud_ota_cert_provision(void)
 	return 0;
 }
 
-void pyrinas_cloud_ota_evt_handler(enum pyrinas_cloud_ota_state state)
+void pyrinas_cloud_evt_handler(const struct pyrinas_cloud_evt *const p_evt)
 {
 
-	LOG_DBG("pyrinas_cloud_evt_handler: %d", state);
+	LOG_DBG("pyrinas_cloud_evt_type: %d", p_evt->type);
 
-	switch (state)
+	switch (p_evt->type)
 	{
-	case ota_state_ready:
+	case PYRINAS_CLOUD_EVT_READY:
 		/* Start main thread */
 		k_sem_give(&main_thread_proceed_sem);
 		break;
-	default:
-		LOG_INF("FOTA in progress.");
-		break;
-	}
-}
-
-static void cloud_state_callback(enum pryinas_cloud_state state)
-{
-	switch (state)
-	{
-	case cloud_state_disconnected:
+	case PYRINAS_CLOUD_EVT_DISCONNECTED:
 		LOG_WRN("Disconnected!");
 		k_delayed_work_submit(&reconnect_work, K_SECONDS(2));
 		break;
-
-	case cloud_state_connected:
-		LOG_INF("Connected!");
+	default:
 		break;
 	}
 }
@@ -328,12 +316,6 @@ void main(void)
 		printk("Failed to initialize AT commands, err %d\n", err);
 	}
 
-	err = at_notif_init();
-	if (err)
-	{
-		printk("Failed to initialize AT notifications, err %d\n", err);
-	}
-
 	/* Provision OTA CA cert */
 	err = pyrinas_cloud_ota_cert_provision();
 	if (err)
@@ -352,10 +334,11 @@ void main(void)
 	k_delayed_work_init(&reconnect_work, reconnect_work_fn);
 
 	/* Init Pyrinas Cloud */
-	pyrinas_cloud_init(pyrinas_cloud_ota_evt_handler);
+	struct pyrinas_cloud_config config = {
+		.evt_cb = pyrinas_cloud_evt_handler,
+	};
 
-	/* Callback time*/
-	pyrinas_cloud_register_state_evt(cloud_state_callback);
+	pyrinas_cloud_init(&config);
 
 	/* Connect */
 	err = pyrinas_cloud_connect();

@@ -38,6 +38,42 @@ enum pyrinas_cloud_ota_cmd_type
   ota_cmd_type_done,
 };
 
+/* Event type */
+enum pyrinas_cloud_evt_type
+{
+  PYRINAS_CLOUD_EVT_CONNECTING,
+  PYRINAS_CLOUD_EVT_CONNECTED,
+  PYRINAS_CLOUD_EVT_READY,
+  PYRINAS_CLOUD_EVT_ERROR,
+  PYRINAS_CLOUD_EVT_DISCONNECTED,
+  PYRINAS_CLOUD_EVT_DATA_RECIEVED,
+  PYRINAS_CLOUD_EVT_FOTA_START,
+  PYRINAS_CLOUD_EVT_FOTA_DOWNLOADING,
+  PYRINAS_CLOUD_EVT_FOTA_DONE,
+  PYRINAS_CLOUD_EVT_FOTA_REBOOTING,
+  PYRINAS_CLOUD_EVT_FOTA_ERROR,
+};
+
+struct pyrinas_cloud_evt_data
+{
+  char *topic;
+  size_t topic_len;
+  char *data;
+  size_t data_len;
+};
+
+/* Used for different states of Pyrinas Cloud*/
+struct pyrinas_cloud_evt
+{
+  enum pyrinas_cloud_evt_type type;
+  union
+  {
+    int err;
+    struct pyrinas_cloud_evt_data msg;
+  } data;
+};
+
+/* Used to track the state of OTA internally to pyrinas_cloud*/
 enum pyrinas_cloud_ota_state
 {
   ota_state_ready,
@@ -49,6 +85,7 @@ enum pyrinas_cloud_ota_state
   ota_state_rebooting
 };
 
+/* Used to track the state of the connection internally to pyrinas_cloud*/
 enum pryinas_cloud_state
 {
   cloud_state_disconnected,
@@ -89,8 +126,7 @@ struct pyrinas_cloud_ota_data
 };
 
 /* Callbacks */
-typedef void (*pyrinas_cloud_ota_state_evt_t)(enum pyrinas_cloud_ota_state evt);
-typedef void (*pyrinas_cloud_state_evt_t)(enum pryinas_cloud_state evt);
+typedef void (*pyrinas_cloud_evt_cb_t)(const struct pyrinas_cloud_evt *const p_evt);
 typedef void (*pyrinas_cloud_application_cb_t)(const uint8_t *topic, size_t topic_len, const uint8_t *data, size_t data_len);
 
 typedef struct
@@ -101,19 +137,23 @@ typedef struct
   size_t topic_len;
 } pryinas_cloud_application_cb_entry_t;
 
+/* Pyrinas Cloud Config */
+struct pyrinas_cloud_config
+{
+  pyrinas_cloud_evt_cb_t evt_cb;
+};
+
 /* Init MQTT Client */
-void pyrinas_cloud_init(pyrinas_cloud_ota_state_evt_t cb);
+void pyrinas_cloud_init(struct pyrinas_cloud_config *p_config);
 
-void pyrinas_cloud_test();
-
+/* Connects to Pyrinas*/
 int pyrinas_cloud_connect();
+
+/* Disconnects from Pyrinas */
 int pyrinas_cloud_disconnect();
 
-void pyrinas_cloud_start();
-
+/* Determines if conected */
 bool pyrinas_cloud_is_connected();
-
-void pyrinas_cloud_register_state_evt(pyrinas_cloud_state_evt_t cb);
 
 /* Register client device */
 int pyrinas_cloud_register_uid(char *uid);
@@ -133,6 +173,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt);
 /* Publish central event to the cloud */
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len);
 
+/* Used during polling process */
 void pyrinas_cloud_process();
 
 #endif /* _PYRINAS_CLOUD_H */
