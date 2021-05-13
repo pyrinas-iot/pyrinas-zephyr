@@ -254,7 +254,7 @@ static void ble_evt_handler(const char *data, uint16_t len)
         err = k_msgq_put(&m_event_queue, &incoming, K_NO_WAIT);
         if (err)
         {
-            LOG_ERR("Unable to add item to queue!");
+            LOG_ERR("Unable to add event from device to queue!");
         }
 
         // Start work if it hasn't been already

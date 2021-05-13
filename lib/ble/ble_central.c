@@ -354,7 +354,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
             int err = k_msgq_put(&m_conns[i].q, &evt, K_NO_WAIT);
             if (err)
             {
-                LOG_ERR("Unable to add item to queue!");
+                LOG_ERR("Unable to add outgoing event to queue!");
             }
         }
     }
