@@ -8,6 +8,7 @@
 #include <device.h>
 #include <devicetree.h>
 #include <drivers/gpio.h>
+#include <power/reboot.h>
 #include <settings/settings.h>
 #include <drivers/counter.h>
 #include <ble/ble_m.h>
@@ -215,6 +216,9 @@ void pyrinas_cloud_evt_handler(const struct pyrinas_cloud_evt *const p_evt)
 	case PYRINAS_CLOUD_EVT_DISCONNECTED:
 		LOG_WRN("Disconnected!");
 		k_delayed_work_submit(&reconnect_work, K_SECONDS(2));
+		break;
+	case PYRINAS_CLOUD_EVT_FOTA_DONE:
+		sys_reboot(0);
 		break;
 	default:
 		break;
