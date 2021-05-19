@@ -43,7 +43,7 @@ config PYRINAS_CLOUD_HTTPS_SEC_TAG
 
 config PYRINAS_CLOUD_PEER_VERIFY
 	int "Peer verify parameter for mqtt_client"
-	default 1
+	default 2
 	help
 			Set to 0 for VERIFY_NONE, 1 for VERIFY_OPTIONAL, and 2 for VERIFY_REQUIRED.
 

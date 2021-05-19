@@ -13,7 +13,6 @@
 #include <pyrinas_cloud/pyrinas_cloud.h>
 
 #include <net/fota_download.h>
-#include <power/reboot.h>
 #include <cellular/cellular.h>
 
 #include <assert.h>
@@ -78,8 +77,6 @@ static struct k_work ota_done_work;
 static struct k_work on_connect_work;
 static struct k_delayed_work ota_check_subscribed_work;
 static struct k_delayed_work fota_work;
-/* Used in system */
-static struct k_work ota_reboot_work;
 
 /* Making the ota dat static */
 static struct pyrinas_cloud_ota_data ota_data;
@@ -434,8 +431,6 @@ static void fota_start_fn(struct k_work *unused)
             m_config.evt_cb(&evt);
         }
 
-        /* Reboot on error.. */
-        sys_reboot(0);
         return;
     }
 
@@ -526,13 +521,6 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
 
                 /* Subscribe to Application topic */
                 subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
-
-                /* Send to calback */
-                if (m_config.evt_cb)
-                {
-                    struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_DONE};
-                    m_config.evt_cb(&evt);
-                }
             }
         }
 
@@ -590,17 +578,20 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             /* Not connected */
             atomic_set(&cloud_state_s, cloud_state_disconnected);
 
-            /* Send to calback */
-            if (m_config.evt_cb)
-            {
-                struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_DISCONNECTED};
-                m_config.evt_cb(&evt);
-            }
-
             break;
         }
 
         LOG_INF("MQTT client connected!");
+
+        /* Connected */
+        atomic_set(&cloud_state_s, cloud_state_connected);
+
+        /* Send to calback */
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_CONNECTED};
+            m_config.evt_cb(&evt);
+        }
 
         /* On connect work */
         k_work_submit(&on_connect_work);
@@ -782,25 +773,6 @@ static void ota_request_work_fn(struct k_work *unused)
     publish_ota_check();
 }
 
-static void reboot_work_fn(struct k_work *unused)
-{
-
-    LOG_DBG("Reboot work fn\n");
-
-    /* Rebooting state */
-    atomic_set(&ota_state_s, ota_state_rebooting);
-
-    /* Send to calback */
-    if (m_config.evt_cb)
-    {
-        struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_REBOOTING};
-        m_config.evt_cb(&evt);
-    }
-
-    /* Rebooooot */
-    sys_reboot(0);
-}
-
 static void ota_done_work_fn(struct k_work *unused)
 {
     /* Publish OTA done */
@@ -812,7 +784,6 @@ static void work_init()
     k_delayed_work_init(&fota_work, fota_start_fn);
     k_delayed_work_init(&ota_check_subscribed_work, ota_check_subscribed_work_fn);
     k_work_init(&on_connect_work, on_connect_fn);
-    k_work_init(&ota_reboot_work, reboot_work_fn);
     k_work_init(&ota_request_work, ota_request_work_fn);
     k_work_init(&ota_done_work, ota_done_work_fn);
     k_work_init(&publish_telemetry_work, publish_telemetry_work_fn);
@@ -881,9 +852,6 @@ static void fota_evt(const struct fota_download_evt *p_evt)
             m_config.evt_cb(&evt);
         }
 
-        /* Reboot work start */
-        k_work_submit(&ota_reboot_work);
-
         break;
     case FOTA_DOWNLOAD_EVT_FINISHED:
         LOG_INF("OTA Done.");
@@ -898,8 +866,6 @@ static void fota_evt(const struct fota_download_evt *p_evt)
             m_config.evt_cb(&evt);
         }
 
-        /* Reboot work start */
-        k_work_submit(&ota_reboot_work);
         break;
 
     default:
@@ -1055,6 +1021,13 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
         LOG_WRN("Unable to publish. Err: %i", err);
     }
 
+    /* Publish telemetry */
+    err = pyrinas_cloud_publish_telemetry_evt(evt);
+    if (err)
+    {
+        LOG_WRN("Unable to publish event telemetry. Err: %i", err);
+    }
+
     return err;
 }
 
@@ -1088,6 +1061,16 @@ start:
     if (err != 0)
     {
         LOG_ERR("client_init %d", err);
+
+        /* Send to calback */
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
+                                            .data.err = err};
+            m_config.evt_cb(&evt);
+        }
+
+        goto reset;
     }
 
     /* Connect to MQTT */
@@ -1099,7 +1082,8 @@ start:
         /* Send to calback */
         if (m_config.evt_cb)
         {
-            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_DISCONNECTED};
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
+                                            .data.err = err};
             m_config.evt_cb(&evt);
         }
 
@@ -1109,16 +1093,6 @@ start:
     /* Set FDS info */
     fds.fd = client.transport.tls.sock;
     fds.events = POLLIN;
-
-    /* Connected */
-    atomic_set(&cloud_state_s, cloud_state_connected);
-
-    /* Send to calback */
-    if (m_config.evt_cb)
-    {
-        struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_CONNECTED};
-        m_config.evt_cb(&evt);
-    }
 
     while (true)
     {
