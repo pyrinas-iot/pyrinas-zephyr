@@ -25,7 +25,8 @@ LOG_MODULE_REGISTER(ble_m);
 #define member_size(type, member) sizeof(((type *)0)->member)
 
 // Queue definition
-K_MSGQ_DEFINE(m_event_queue, sizeof(pyrinas_event_t), 20, BLE_QUEUE_ALIGN);
+K_MSGQ_DEFINE(m_event_rx_queue, sizeof(pyrinas_event_t), 24, BLE_QUEUE_ALIGN);
+K_MSGQ_DEFINE(m_event_tx_queue, sizeof(pyrinas_event_t), 24, BLE_QUEUE_ALIGN);
 
 static ble_subscription_list_t m_subscribe_list; /**< Use for adding/removing subscriptions */
 static ble_stack_init_t m_config;                /**< Init config */
@@ -33,17 +34,18 @@ static raw_susbcribe_handler_t m_raw_handler_ext;
 static bool m_init_complete = false;
 
 /* Related work handler for rx ring buf*/
-static struct k_work bt_send_work;
+static struct k_work bt_rx_work, bt_tx_work;
 static struct k_work bt_ready_work;
 static struct k_work bt_erase_bonds_work;
-static void bt_send_work_handler(struct k_work *work);
+static void bt_rx_work_handler(struct k_work *work);
+static void bt_tx_work_handler(struct k_work *work);
 static void bt_send_ready_work_handler(struct k_work *work);
 static void bt_erase_bonds_work_handler(struct k_work *work);
 
 static int subscriber_search(pyrinas_event_name_data_t *event_name); /* Forward declaration of subscriber_search */
 
 /* Temporary evt */
-static pyrinas_event_t evt;
+static pyrinas_event_t rx_evt, tx_evt;
 
 static void bt_erase_bonds_work_handler(struct k_work *work)
 {
@@ -56,30 +58,62 @@ static void bt_erase_bonds_work_handler(struct k_work *work)
     }
 }
 
-static void bt_send_work_handler(struct k_work *work)
+static void bt_tx_work_handler(struct k_work *work)
 {
-
-    while (k_msgq_num_used_get(&m_event_queue))
+    while (k_msgq_num_used_get(&m_event_tx_queue))
     {
 
         // Get it from the queue
-        int err = k_msgq_get(&m_event_queue, &evt, K_NO_WAIT);
+        int err = k_msgq_get(&m_event_tx_queue, &tx_evt, K_NO_WAIT);
+        if (err == 0)
+        {
+
+            uint8_t buf[pyrinas_event_t_size];
+
+            size_t size = 0;
+
+            /* Encode into something useful */
+            int err = pyrinas_codec_encode(&tx_evt, buf, pyrinas_event_t_size, &size);
+            if (err)
+            {
+                LOG_ERR("Unable to encode pyrinas message");
+                return;
+            }
+
+// TODO: send to connected device(s)
+#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+            ble_peripheral_write(buf, size);
+#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+            ble_central_write(buf, size);
+#endif
+        }
+    }
+}
+
+static void bt_rx_work_handler(struct k_work *work)
+{
+
+    while (k_msgq_num_used_get(&m_event_rx_queue))
+    {
+
+        // Get it from the queue
+        int err = k_msgq_get(&m_event_rx_queue, &rx_evt, K_NO_WAIT);
         if (err == 0)
         {
             // Forward to raw handler if it exists
             if (m_raw_handler_ext != NULL)
             {
-                m_raw_handler_ext(&evt);
+                m_raw_handler_ext(&rx_evt);
             }
 
             // Check if exists
-            int index = subscriber_search(&evt.name);
+            int index = subscriber_search(&rx_evt.name);
 
             // If index is >= 0, we have an entry
             if (index != -1)
             {
                 // Push to susbscription context
-                m_subscribe_list.subscribers[index].evt_handler((char *)evt.name.bytes, (char *)evt.data.bytes);
+                m_subscribe_list.subscribers[index].evt_handler((char *)rx_evt.name.bytes, (char *)rx_evt.data.bytes);
             }
         }
     }
@@ -112,6 +146,7 @@ void ble_disconnect(void)
 void ble_publish(char *name, char *data)
 {
 
+    int err;
     uint8_t name_length = strlen(name) + 1;
     uint8_t data_length = strlen(data) + 1;
 
@@ -139,8 +174,14 @@ void ble_publish(char *name, char *data)
     memcpy(event.name.bytes, name, name_length);
     memcpy(event.data.bytes, data, data_length);
 
-    // Then publish it as a raw format.
-    ble_publish_raw(event);
+    err = k_msgq_put(&m_event_tx_queue, &event, K_NO_WAIT);
+    if (err)
+    {
+        LOG_ERR("Unable to add tx event from device to queue!");
+    }
+
+    // Start work if it hasn't been already
+    k_work_submit(&bt_tx_work);
 }
 
 void ble_publish_raw(pyrinas_event_t event)
@@ -152,24 +193,14 @@ void ble_publish_raw(pyrinas_event_t event)
     // Copy over the address information
     // memcpy(event.faddr, gap_addr.addr, sizeof(event.faddr));
 
-    uint8_t buf[pyrinas_event_t_size];
-
-    size_t size = 0;
-
-    /* Encode into something useful */
-    int err = pyrinas_codec_encode(&event, buf, pyrinas_event_t_size, &size);
+    int err = k_msgq_put(&m_event_tx_queue, &event, K_NO_WAIT);
     if (err)
     {
-        LOG_ERR("Unable to encode pyrinas message");
-        return;
+        LOG_ERR("Unable to add tx event from device to queue!");
     }
 
-// TODO: send to connected device(s)
-#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
-    ble_peripheral_write(buf, size);
-#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
-    ble_central_write(buf, size);
-#endif
+    // Start work if it hasn't been already
+    k_work_submit(&bt_tx_work);
 }
 
 void ble_subscribe(char *name, susbcribe_handler_t handler)
@@ -251,14 +282,14 @@ static void ble_evt_handler(const char *data, uint16_t len)
         // LOG_INF("%d %d", sizeof(pyrinas_event_t), BLE_INCOMING_PROTOBUF_SIZE);
 
         // Queue events
-        err = k_msgq_put(&m_event_queue, &incoming, K_NO_WAIT);
+        err = k_msgq_put(&m_event_rx_queue, &incoming, K_NO_WAIT);
         if (err)
         {
             LOG_ERR("Unable to add event from device to queue!");
         }
 
         // Start work if it hasn't been already
-        k_work_submit(&bt_send_work);
+        k_work_submit(&bt_rx_work);
     }
     else
     {
@@ -321,7 +352,8 @@ void ble_stack_init(ble_stack_init_t *p_init)
     LOG_INF("Buffer item size: %d", BLE_QUEUE_ITEM_SIZE);
 
     /* Init work */
-    k_work_init(&bt_send_work, bt_send_work_handler);
+    k_work_init(&bt_rx_work, bt_rx_work_handler);
+    k_work_init(&bt_tx_work, bt_tx_work_handler);
     k_work_init(&bt_ready_work, bt_send_ready_work_handler);
     k_work_init(&bt_erase_bonds_work, bt_erase_bonds_work_handler);
 
