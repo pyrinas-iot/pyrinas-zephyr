@@ -173,6 +173,9 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt);
 /* Publish central event to the cloud */
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len);
 
+/* Publish telemetry only */
+int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt);
+
 /* Used during polling process */
 void pyrinas_cloud_process();
 

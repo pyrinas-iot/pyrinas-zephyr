@@ -209,6 +209,10 @@ void pyrinas_cloud_evt_handler(const struct pyrinas_cloud_evt *const p_evt)
 
 	switch (p_evt->type)
 	{
+	case PYRINAS_CLOUD_EVT_ERROR:
+		LOG_ERR("PYRINAS_CLOUD_EVT_ERROR. ERR: %i", p_evt->data.err);
+		sys_reboot(0);
+		break;
 	case PYRINAS_CLOUD_EVT_READY:
 		/* Start main thread */
 		k_sem_give(&main_thread_proceed_sem);

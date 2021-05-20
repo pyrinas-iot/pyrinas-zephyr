@@ -936,7 +936,7 @@ void pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     work_init();
 }
 
-static int pyrinas_cloud_publish_telemetry_evt(pyrinas_event_t *evt)
+int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
 {
 
     char topic[256];
@@ -1019,13 +1019,6 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     if (err)
     {
         LOG_WRN("Unable to publish. Err: %i", err);
-    }
-
-    /* Publish telemetry */
-    err = pyrinas_cloud_publish_telemetry_evt(evt);
-    if (err)
-    {
-        LOG_WRN("Unable to publish event telemetry. Err: %i", err);
     }
 
     return err;
