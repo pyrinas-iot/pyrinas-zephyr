@@ -33,7 +33,7 @@ void ble_central_disconnect(void);
 void ble_central_attach_handler(encoded_data_handler_t raw_evt_handler);
 void ble_central_write(const uint8_t *data, uint16_t size);
 void ble_central_scan_start(void);
-int ble_central_init(ble_central_config_t *init);
+int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init);
 void ble_central_ready(void);
 void ble_central_process(void);
 void ble_central_set_whitelist(ble_central_config_t *config);

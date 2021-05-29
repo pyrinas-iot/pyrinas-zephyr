@@ -33,6 +33,11 @@ static ble_stack_init_t m_config;                /**< Init config */
 static raw_susbcribe_handler_t m_raw_handler_ext;
 static bool m_init_complete = false;
 
+/* Stack definition for application workqueue */
+K_THREAD_STACK_DEFINE(ble_stack_area,
+                      CONFIG_APPLICATION_WORKQUEUE_STACK_SIZE);
+static struct k_work_q ble_work_q;
+
 /* Related work handler for rx ring buf*/
 static struct k_work bt_rx_work, bt_tx_work;
 static struct k_work bt_ready_work;
@@ -181,7 +186,7 @@ void ble_publish(char *name, char *data)
     }
 
     // Start work if it hasn't been already
-    k_work_submit(&bt_tx_work);
+    k_work_submit_to_queue(&ble_work_q, &bt_tx_work);
 }
 
 void ble_publish_raw(pyrinas_event_t event)
@@ -200,7 +205,7 @@ void ble_publish_raw(pyrinas_event_t event)
     }
 
     // Start work if it hasn't been already
-    k_work_submit(&bt_tx_work);
+    k_work_submit_to_queue(&ble_work_q, &bt_tx_work);
 }
 
 void ble_subscribe(char *name, susbcribe_handler_t handler)
@@ -289,7 +294,7 @@ static void ble_evt_handler(const char *data, uint16_t len)
         }
 
         // Start work if it hasn't been already
-        k_work_submit(&bt_rx_work);
+        k_work_submit_to_queue(&ble_work_q, &bt_rx_work);
     }
     else
     {
@@ -334,7 +339,7 @@ static void ble_ready(int err)
     else
     {
         LOG_INF("BLE Stack Ready!");
-        k_work_submit(&bt_ready_work);
+        k_work_submit_to_queue(&ble_work_q, &bt_ready_work);
     }
 }
 
@@ -350,6 +355,10 @@ void ble_stack_init(ble_stack_init_t *p_init)
     }
 
     LOG_INF("Buffer item size: %d", BLE_QUEUE_ITEM_SIZE);
+
+    k_work_q_start(&ble_work_q, ble_stack_area,
+                   K_THREAD_STACK_SIZEOF(ble_stack_area),
+                   CONFIG_APPLICATION_WORKQUEUE_PRIORITY);
 
     /* Init work */
     k_work_init(&bt_rx_work, bt_rx_work_handler);
@@ -375,7 +384,7 @@ void ble_stack_init(ble_stack_init_t *p_init)
     ble_central_attach_handler(ble_evt_handler);
 
     // Initialize
-    ble_central_init(&m_config.central_config);
+    ble_central_init(&ble_work_q, &m_config.central_config);
 #else
 #error CONFIG_PYRINAS_PERIPH_ENABLED or CONFIG_PYRINAS_CENTRAL_ENABLED must be defined.
 #endif
@@ -412,5 +421,5 @@ static int subscriber_search(pyrinas_event_name_data_t *event_name)
 /* Deleting devices from Whitelist */
 void ble_erase_bonds(void)
 {
-    k_work_submit(&bt_erase_bonds_work);
+    k_work_submit_to_queue(&ble_work_q, &bt_erase_bonds_work);
 }

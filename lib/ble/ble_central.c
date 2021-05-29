@@ -48,6 +48,9 @@ static struct ble_c_connection m_conns[CONFIG_BT_MAX_CONN];
 /* Static local handlers */
 static encoded_data_handler_t m_evt_cb = NULL;
 
+/* Work! */
+static struct k_work_q *ble_work_q;
+
 /* Related work handler for rx ring buf*/
 static void bt_send_work_handler(struct k_work *work);
 static struct k_delayed_work bt_send_work;
@@ -139,7 +142,7 @@ static void bt_send_work_handler(struct k_work *work)
 
     if (schedule_work)
     {
-        k_delayed_work_submit(&bt_send_work, K_MSEC(50));
+        k_delayed_work_submit_to_queue(ble_work_q, &bt_send_work, K_MSEC(50));
     }
 }
 
@@ -360,7 +363,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     }
 
     // Start the worker thread
-    k_delayed_work_submit(&bt_send_work, K_NO_WAIT);
+    k_delayed_work_submit_to_queue(ble_work_q, &bt_send_work, K_NO_WAIT);
 }
 
 static void force_disconnect(struct bt_conn *conn)
@@ -518,7 +521,7 @@ void ble_central_scan_start()
         atomic_set(&scan_failure, 1);
 
         /* TODO: determine if this is needed */
-        // k_delayed_work_submit(&bt_start_scan_work, K_SECONDS(1));
+        // k_delayed_work_submit_to_queue(ble_work_q, &bt_start_scan_work, K_SECONDS(1));
         return;
     }
 
@@ -683,16 +686,19 @@ void ble_central_attach_handler(encoded_data_handler_t evt_cb)
     m_evt_cb = evt_cb;
 }
 
-int ble_central_init(ble_central_config_t *p_init)
+int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init)
 {
 
     LOG_INF("ble_central_init");
 
     // Throw an error if NULL
-    if (p_init == NULL)
-    {
-        __ASSERT(p_init == NULL, "Error: Invalid param.");
-    }
+    __ASSERT(p_init != NULL, "Error: Invalid param.");
+
+    // Check if the work queue is null
+    __ASSERT(p_ble_work_q != NULL, "Error: Invalid param.");
+
+    // Assign it!
+    ble_work_q = p_ble_work_q;
 
     int err = bt_conn_auth_cb_register(&conn_auth_callbacks);
     if (err)
