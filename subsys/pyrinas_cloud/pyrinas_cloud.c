@@ -79,7 +79,7 @@ static struct k_delayed_work ota_check_subscribed_work;
 static struct k_delayed_work fota_work;
 
 /* Making the ota dat static */
-static struct pyrinas_cloud_ota_data ota_data;
+static struct pyrinas_cloud_ota_package ota_package;
 
 /* Callback for application back to main context*/
 pryinas_cloud_application_cb_entry_t *callbacks[CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT];
@@ -414,10 +414,37 @@ static void fota_start_fn(struct k_work *unused)
     sec_tag = CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG;
 #endif
 
-    LOG_DBG("%s/%s using tag %d\n", ota_data.host, ota_data.file, sec_tag);
+    int index = -1;
+
+    /* Make sure we're using the correct image*/
+    for (int i = 0; i < PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT; i++)
+    {
+        // Set the index
+        if (ota_package.files[i].image_type == pyrinas_cloud_ota_image_type_primary)
+        {
+            index = i;
+            break;
+        }
+    }
+
+    /* If a primary image is not found error! */
+    if (index == -1)
+    {
+        /* Send to calback */
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_ERROR,
+                                            .data.err = -ENOTSUP};
+            m_config.evt_cb(&evt);
+        }
+
+        return;
+    }
+
+    LOG_DBG("%s/%s using tag %d\n", ota_package.files[index].host, ota_package.files[index].file, sec_tag);
 
     /* Start download uses default port and APN*/
-    err = fota_download_start(ota_data.host, ota_data.file, sec_tag, NULL, 0);
+    err = fota_download_start(ota_package.files[index].host, ota_package.files[index].file, sec_tag, NULL, 0);
     if (err)
     {
         LOG_ERR("fota_download_start error %d\n", err);
@@ -459,7 +486,7 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
         atomic_set(&initial_ota_check, 1);
 
         /* Parse OTA event */
-        int err = decode_ota_data(&ota_data, data, data_len);
+        int err = decode_ota_package(&ota_package, data, data_len);
 
         uint8_t ver[64];
         get_version_string(ver, sizeof(ver));
@@ -470,7 +497,7 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
         {
 
             /* Check numeric */
-            result = ver_comp(&pyrinas_version, &ota_data.version);
+            result = ver_comp(&pyrinas_version, &ota_package.version);
 
             /* Print result */
             LOG_INF("New version? %s ", result == 1 ? "true" : "false");

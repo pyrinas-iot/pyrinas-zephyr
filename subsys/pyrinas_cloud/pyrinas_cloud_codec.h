@@ -22,14 +22,19 @@ typedef enum
 
 typedef enum
 {
-    version_pos,
+    image_type_pos,
     host_pos,
     file_pos,
-    force_pos,
-} pyrinas_cloud_ota_data_pos_t;
+} pyrinas_cloud_ota_file_info_pos_t;
+
+typedef enum
+{
+    version_pos,
+    file_info_pos,
+} pyrinas_cloud_ota_package_pos_t;
 
 QCBORError encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t *buf, size_t data_len, size_t *payload_len);
-QCBORError decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, size_t data_len);
+QCBORError decode_ota_package(struct pyrinas_cloud_ota_package *ota_data, const char *data, size_t data_len);
 QCBORError encode_telemetry_data(struct pyrinas_cloud_telemetry_data *p_data, uint8_t *buf, size_t data_len, size_t *payload_len);
 
 #endif /* _PYRINAS_CLOUD_CBOR_PARSER_H */

@@ -72,7 +72,47 @@ void decode_ota_version(union pyrinas_cloud_ota_version *p_version, QCBORDecodeC
     QCBORDecode_ExitMap(dc);
 }
 
-QCBORError decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *data, size_t data_len)
+void decode_ota_file_info(struct pyrinas_cloud_ota_file_info *p_file_info, QCBORDecodeContext *dc)
+{
+    QCBORError uErr;
+    uint64_t temp;
+
+    QCBORDecode_EnterMapFromMapN(dc, 0);
+
+    //Get the image type
+    QCBORDecode_GetUInt64ConvertAllInMapN(dc, image_type_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    p_file_info->image_type = (uint8_t)temp;
+
+    /* Get the host */
+    UsefulBufC host_data;
+    QCBORDecode_GetTextStringInMapN(&dc, host_pos, &host_data);
+    memcpy(p_file_info->host, host_data.ptr, host_data.len);
+
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        return;
+    }
+
+    /* Get the file */
+    UsefulBufC file_data;
+    QCBORDecode_GetTextStringInMapN(&dc, file_pos, &file_data);
+    memcpy(p_file_info->file, file_data.ptr, file_data.len);
+
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        return;
+    }
+
+    LOG_INF("TYPE: %d URL: %s/%s", p_file_info->image_type, p_file_info->host, p_file_info->file);
+
+    QCBORDecode_ExitMap(dc);
+}
+
+QCBORError decode_ota_package(struct pyrinas_cloud_ota_package *ota_package, const char *data, size_t data_len)
 {
     /* Setup of the goods */
     QCBORError uErr;
@@ -91,7 +131,7 @@ QCBORError decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *
     }
 
     /* Get the ota version struct */
-    decode_ota_version(&ota_data->version, &dc, version_pos);
+    decode_ota_version(&ota_package->version, &dc, version_pos);
 
     // Check to make sure we have a map
     uErr = QCBORDecode_GetError(&dc);
@@ -100,42 +140,13 @@ QCBORError decode_ota_data(struct pyrinas_cloud_ota_data *ota_data, const char *
         goto Done;
     }
 
-    /* Get the host */
-    UsefulBufC host_data;
-    QCBORDecode_GetTextStringInMapN(&dc, host_pos, &host_data);
-    memcpy(ota_data->host, host_data.ptr, host_data.len);
-
-    // Check to make sure we have a map
-    uErr = QCBORDecode_GetError(&dc);
-    if (uErr != QCBOR_SUCCESS)
+    /* Get the hash from array */
+    QCBORDecode_EnterArrayFromMapN(&dc, file_info_pos);
+    for (uint8_t i = 0; i < PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT; i++)
     {
-        goto Done;
+        decode_ota_file_info(&ota_package->files[i], &dc);
     }
-
-    /* Get the file */
-    UsefulBufC file_data;
-    QCBORDecode_GetTextStringInMapN(&dc, file_pos, &file_data);
-    memcpy(ota_data->file, file_data.ptr, file_data.len);
-
-    // Check to make sure we have a map
-    uErr = QCBORDecode_GetError(&dc);
-    if (uErr != QCBOR_SUCCESS)
-    {
-        goto Done;
-    }
-
-    /* Get the force value */
-    QCBORDecode_GetBoolInMapN(&dc, force_pos, &ota_data->force);
-
-    // Check to make sure we have a map
-    uErr = QCBORDecode_GetError(&dc);
-    if (uErr != QCBOR_SUCCESS)
-    {
-        goto Done;
-    }
-
-    LOG_INF("URL: %s/%s", ota_data->host, ota_data->file);
-    LOG_INF("Force: %d", ota_data->force);
+    QCBORDecode_ExitArray(&dc);
 
     /* Exit main map and return*/
     QCBORDecode_ExitMap(&dc);

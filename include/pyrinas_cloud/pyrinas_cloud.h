@@ -13,6 +13,8 @@
 
 /* Defines */
 #define IMEI_LEN 15
+#define PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT 2
+#define PYRINAS_OTA_PACKAGE_MAX_FILE_PATH_CHARS 128
 
 /* Used to encode telemetry related keys */
 enum pyrinas_cloud_telemetry_type
@@ -117,12 +119,23 @@ union pyrinas_cloud_ota_version
   uint8_t raw[12];
 };
 
-struct pyrinas_cloud_ota_data
+enum pyrinas_cloud_ota_image_type
+{
+  pyrinas_cloud_ota_image_type_primary = (1 << 0),
+  pyrinas_cloud_ota_image_type_secondary = (1 << 1)
+};
+
+struct pyrinas_cloud_ota_file_info
+{
+  enum pyrinas_cloud_ota_image_type image_type;
+  char host[PYRINAS_OTA_PACKAGE_MAX_FILE_PATH_CHARS];
+  char file[PYRINAS_OTA_PACKAGE_MAX_FILE_PATH_CHARS];
+};
+
+struct pyrinas_cloud_ota_package
 {
   union pyrinas_cloud_ota_version version;
-  char host[128];
-  char file[128];
-  bool force;
+  struct pyrinas_cloud_ota_file_info files[PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT];
 };
 
 /* Callbacks */
