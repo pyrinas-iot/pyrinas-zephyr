@@ -18,6 +18,14 @@ config APP_WIPE_STORAGE
 
 if PYRINAS_BLUETOOTH_ENABLED
 
+config PYRINAS_BLUETOOTH_WORKQUEUE_STACK_SIZE
+	int "Bluetooth workqueue stack size"
+	default 2048
+
+config PYRINAS_BLUETOOTH_WORKQUEUE_PRIORITY
+	int "Bluetooth workqueue priority"
+	default SYSTEM_WORKQUEUE_PRIORITY
+
 choice
 	prompt "Bluetooth Mode"
 	default PYRINAS_PERIPH_ENABLED

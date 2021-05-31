@@ -92,7 +92,7 @@ static uint16_t ota_sub_message_id = 0;
 
 /* Stack definition for application workqueue */
 K_THREAD_STACK_DEFINE(cloud_stack_area,
-                      CONFIG_APPLICATION_WORKQUEUE_STACK_SIZE);
+                      CONFIG_PYRINAS_CLOUD_WORKQUEUE_STACK_SIZE);
 static struct k_work_q cloud_work_q;
 
 #if defined(CONFIG_BSD_LIBRARY)
@@ -816,7 +816,7 @@ static void work_init()
 
     k_work_q_start(&cloud_work_q, cloud_stack_area,
                    K_THREAD_STACK_SIZEOF(cloud_stack_area),
-                   CONFIG_APPLICATION_WORKQUEUE_PRIORITY);
+                   CONFIG_PYRINAS_CLOUD_WORKQUEUE_PRIORITY);
 
     k_delayed_work_init(&fota_work, fota_start_fn);
     k_delayed_work_init(&ota_check_subscribed_work, ota_check_subscribed_work_fn);

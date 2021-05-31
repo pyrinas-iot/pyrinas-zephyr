@@ -35,7 +35,7 @@ static bool m_init_complete = false;
 
 /* Stack definition for application workqueue */
 K_THREAD_STACK_DEFINE(ble_stack_area,
-                      CONFIG_APPLICATION_WORKQUEUE_STACK_SIZE);
+                      CONFIG_PYRINAS_BLUETOOTH_WORKQUEUE_STACK_SIZE);
 static struct k_work_q ble_work_q;
 
 /* Related work handler for rx ring buf*/
@@ -358,7 +358,7 @@ void ble_stack_init(ble_stack_init_t *p_init)
 
     k_work_q_start(&ble_work_q, ble_stack_area,
                    K_THREAD_STACK_SIZEOF(ble_stack_area),
-                   CONFIG_APPLICATION_WORKQUEUE_PRIORITY);
+                   CONFIG_PYRINAS_BLUETOOTH_WORKQUEUE_PRIORITY);
 
     /* Init work */
     k_work_init(&bt_rx_work, bt_rx_work_handler);
