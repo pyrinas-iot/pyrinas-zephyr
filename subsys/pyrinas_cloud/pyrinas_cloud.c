@@ -90,6 +90,11 @@ static struct pyrinas_cloud_config m_config;
 /* Statically track message id*/
 static uint16_t ota_sub_message_id = 0;
 
+/* Stack definition for application workqueue */
+K_THREAD_STACK_DEFINE(cloud_stack_area,
+                      CONFIG_APPLICATION_WORKQUEUE_STACK_SIZE);
+static struct k_work_q cloud_work_q;
+
 #if defined(CONFIG_BSD_LIBRARY)
 
 /**@brief Recoverable BSD library error. */
@@ -367,7 +372,7 @@ static void telemetry_check_event(struct k_timer *timer)
 {
 
     /* Publish from work queue or else hard fault */
-    k_work_submit(&publish_telemetry_work);
+    k_work_submit_to_queue(&cloud_work_q, &publish_telemetry_work);
 
     /* Restart timer */
     k_timer_start(&telemetry_timer, TELEMETRY_INTERVAL, K_NO_WAIT);
@@ -524,7 +529,7 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
             }
 
             /* Start upgrade here*/
-            k_delayed_work_submit(&fota_work, K_SECONDS(5));
+            k_delayed_work_submit_to_queue(&cloud_work_q, &fota_work, K_SECONDS(5));
         }
         else
         {
@@ -544,7 +549,7 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
                 }
 
                 /* Let the backend know we're done */
-                k_work_submit(&ota_done_work);
+                k_work_submit_to_queue(&cloud_work_q, &ota_done_work);
 
                 /* Subscribe to Application topic */
                 subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
@@ -621,7 +626,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         }
 
         /* On connect work */
-        k_work_submit(&on_connect_work);
+        k_work_submit_to_queue(&cloud_work_q, &on_connect_work);
 
         /*Start telemetry timer every TELEMETRY_INTERVAL */
         k_timer_start(&telemetry_timer, TELEMETRY_INTERVAL, K_NO_WAIT);
@@ -723,10 +728,10 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         if (ota_sub_message_id == evt->param.suback.message_id && atomic_get(&initial_ota_check) == 0)
         {
             /* Submit work */
-            k_work_submit(&ota_request_work);
+            k_work_submit_to_queue(&cloud_work_q, &ota_request_work);
 
             /* Delay work to make sure we are *at least* subscribed to OTA*/
-            k_delayed_work_submit(&ota_check_subscribed_work, K_SECONDS(5));
+            k_delayed_work_submit_to_queue(&cloud_work_q, &ota_check_subscribed_work, K_SECONDS(5));
         }
 
         break;
@@ -808,6 +813,11 @@ static void ota_done_work_fn(struct k_work *unused)
 
 static void work_init()
 {
+
+    k_work_q_start(&cloud_work_q, cloud_stack_area,
+                   K_THREAD_STACK_SIZEOF(cloud_stack_area),
+                   CONFIG_APPLICATION_WORKQUEUE_PRIORITY);
+
     k_delayed_work_init(&fota_work, fota_start_fn);
     k_delayed_work_init(&ota_check_subscribed_work, ota_check_subscribed_work_fn);
     k_work_init(&on_connect_work, on_connect_fn);

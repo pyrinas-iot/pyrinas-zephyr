@@ -62,6 +62,9 @@ void cellular_configure(void)
 {
 #if defined(CONFIG_LTE_LINK_CONTROL)
 
+  // Init LTE lc
+  lte_lc_init();
+
   // PSM and EDRX are off
   lte_lc_edrx_req(false);
   lte_lc_psm_req(false);
@@ -85,7 +88,7 @@ void cellular_configure(void)
     int err;
 
     LOG_INF("LTE Link Connecting ...");
-    err = lte_lc_init_and_connect();
+    err = lte_lc_connect();
     __ASSERT(err == 0, "LTE link could not be established.");
     LOG_INF("LTE Link Connected!");
 
