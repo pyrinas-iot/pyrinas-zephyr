@@ -490,6 +490,9 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
         /* Set check flag */
         atomic_set(&initial_ota_check, 1);
 
+        /* Reset ota_package conents */
+        memset(&ota_package, 0, sizeof(ota_package));
+
         /* Parse OTA event */
         int err = decode_ota_package(&ota_package, data, data_len);
 
@@ -617,6 +620,9 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
 
         /* Connected */
         atomic_set(&cloud_state_s, cloud_state_connected);
+
+        /* Set OTA State back to Ready state */
+        atomic_set(&ota_state_s, ota_state_ready);
 
         /* Send to calback */
         if (m_config.evt_cb)
@@ -876,7 +882,7 @@ static void fota_evt(const struct fota_download_evt *p_evt)
     switch (p_evt->id)
     {
     case FOTA_DOWNLOAD_EVT_ERROR:
-        LOG_INF("Received error from fota_download\n");
+        LOG_INF("Received error from fota_download");
 
         /* Set the state */
         atomic_set(&ota_state_s, ota_state_error);
@@ -888,6 +894,9 @@ static void fota_evt(const struct fota_download_evt *p_evt)
                                             .data.err = (int)p_evt->cause};
             m_config.evt_cb(&evt);
         }
+
+        /* Disconnect */
+        pyrinas_cloud_disconnect();
 
         break;
     case FOTA_DOWNLOAD_EVT_FINISHED:

@@ -77,33 +77,43 @@ void decode_ota_file_info(struct pyrinas_cloud_ota_file_info *p_file_info, QCBOR
     QCBORError uErr;
     uint64_t temp;
 
-    QCBORDecode_EnterMapFromMapN(dc, 0);
+    QCBORDecode_EnterMap(dc, NULL);
 
     //Get the image type
     QCBORDecode_GetUInt64ConvertAllInMapN(dc, image_type_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
     p_file_info->image_type = (uint8_t)temp;
 
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        LOG_ERR("image_type fail! err; %i ", uErr);
+        return;
+    }
+
     /* Get the host */
     UsefulBufC host_data;
-    QCBORDecode_GetTextStringInMapN(&dc, host_pos, &host_data);
+    QCBORDecode_GetTextStringInMapN(dc, host_pos, &host_data);
     memcpy(p_file_info->host, host_data.ptr, host_data.len);
 
     // Check to make sure we have a map
-    uErr = QCBORDecode_GetError(&dc);
+    uErr = QCBORDecode_GetError(dc);
     if (uErr != QCBOR_SUCCESS)
     {
+        LOG_ERR("host decode fail!");
         return;
     }
 
     /* Get the file */
     UsefulBufC file_data;
-    QCBORDecode_GetTextStringInMapN(&dc, file_pos, &file_data);
+    QCBORDecode_GetTextStringInMapN(dc, file_pos, &file_data);
     memcpy(p_file_info->file, file_data.ptr, file_data.len);
 
     // Check to make sure we have a map
-    uErr = QCBORDecode_GetError(&dc);
+    uErr = QCBORDecode_GetError(dc);
     if (uErr != QCBOR_SUCCESS)
     {
+        LOG_ERR("file decode fail!");
         return;
     }
 
@@ -120,6 +130,7 @@ QCBORError decode_ota_package(struct pyrinas_cloud_ota_package *ota_package, con
         .ptr = data,
         .len = data_len};
     QCBORDecodeContext dc;
+    QCBORItem item;
     QCBORDecode_Init(&dc, buf, QCBOR_DECODE_MODE_NORMAL);
     QCBORDecode_EnterMap(&dc, NULL);
 
@@ -140,13 +151,20 @@ QCBORError decode_ota_package(struct pyrinas_cloud_ota_package *ota_package, con
         goto Done;
     }
 
-    /* Get the hash from array */
-    QCBORDecode_EnterArrayFromMapN(&dc, file_info_pos);
-    for (uint8_t i = 0; i < PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT; i++)
+    /* Get array size */
+    QCBORDecode_PeekNext(&dc, &item);
+
+    if (item.uDataType == QCBOR_TYPE_ARRAY)
+
     {
-        decode_ota_file_info(&ota_package->files[i], &dc);
+        /* Get the hash from array */
+        QCBORDecode_EnterArrayFromMapN(&dc, file_info_pos);
+        for (uint8_t i = 0; i < item.val.uCount; i++)
+        {
+            decode_ota_file_info(&ota_package->files[i], &dc);
+        }
+        QCBORDecode_ExitArray(&dc);
     }
-    QCBORDecode_ExitArray(&dc);
 
     /* Exit main map and return*/
     QCBORDecode_ExitMap(&dc);
