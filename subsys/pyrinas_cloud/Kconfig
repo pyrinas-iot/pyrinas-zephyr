@@ -30,17 +30,6 @@ config PYRINAS_CLOUD_PROVISION_CERTIFICATES
 		Enable run-time provisioning of certificates from the
 		certificates header file selected by using NRF_CLOUD_CERTIFICATES_FILE
 
-config PYRINAS_CLOUD_MQTT_KEEPALIVE
-	int "Time after last transmission to send a ping to keep connection on"
-	default 1200
-	help
-	  This should be set to the expected time between messages sent from
-	  this device. Making it larger than the expected data period does not
-	  conserve bandwidth, as the ping is only sent if nothing else
-	  has been within the specified period. Shorter values can prevent hidden
-	  NAT timeouts at the carrier, but also will interrupt GPS fix attempts
-	  and slow down TTFF.
-
 config PYRINAS_CLOUD_SEC_TAG
 	int "Security tag to use for the connection"
 	default 1234
@@ -54,6 +43,12 @@ config PYRINAS_CLOUD_PEER_VERIFY
 	default 2
 	help
 			Set to 0 for VERIFY_NONE, 1 for VERIFY_OPTIONAL, and 2 for VERIFY_REQUIRED.
+
+config PYRINAS_CLOUD_PASSWORD
+	string "MQTT password for authentication"
+
+config PYRINAS_CLOUD_USER_NAME
+	string "MQTT user name for autentication"
 
 config PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC
 	string "MQTT ota subscribe topic"

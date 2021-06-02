@@ -95,6 +95,9 @@ K_THREAD_STACK_DEFINE(cloud_stack_area,
                       CONFIG_PYRINAS_CLOUD_WORKQUEUE_STACK_SIZE);
 static struct k_work_q cloud_work_q;
 
+/* Username and password */
+struct mqtt_utf8 mqtt_user_name, mqtt_password;
+
 #if defined(CONFIG_BSD_LIBRARY)
 
 /**@brief Recoverable BSD library error. */
@@ -850,9 +853,24 @@ static int client_init(struct mqtt_client *client, char *p_client_id, size_t cli
     client->evt_cb = mqtt_evt_handler;
     client->client_id.utf8 = p_client_id;
     client->client_id.size = client_id_sz;
-    client->password = NULL;
-    client->user_name = NULL;
     client->protocol_version = MQTT_VERSION_3_1_1;
+
+/* MQTT user name and password */
+#ifdef CONFIG_PYRINAS_CLOUD_PASSWORD
+    mqtt_password.utf8 = CONFIG_PYRINAS_CLOUD_PASSWORD;
+    mqtt_password.size = strlen(CONFIG_PYRINAS_CLOUD_PASSWORD);
+    client->password = &mqtt_password;
+#else
+    client->password = NULL;
+#endif
+
+#ifdef CONFIG_PYRINAS_CLOUD_USER_NAME
+    mqtt_user_name.utf8 = CONFIG_PYRINAS_CLOUD_USER_NAME;
+    mqtt_user_name.size = strlen(CONFIG_PYRINAS_CLOUD_USER_NAME);
+    client->user_name = &mqtt_user_name;
+#else
+    client->user_name = NULL;
+#endif
 
     /* MQTT buffers configuration */
     client->rx_buf = rx_buffer;
