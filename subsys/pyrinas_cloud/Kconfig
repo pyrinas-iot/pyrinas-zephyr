@@ -17,7 +17,7 @@ if PYRINAS_CLOUD_ENABLED
 
 config PYRINAS_CLOUD_WORKQUEUE_STACK_SIZE
 	int "Pyrinas Cloud workqueue stack size"
-	default 2048
+	default 4096
 
 config PYRINAS_CLOUD_WORKQUEUE_PRIORITY
 	int "Pyrinas Cloud workqueue priority"

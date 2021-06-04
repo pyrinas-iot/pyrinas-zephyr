@@ -36,10 +36,12 @@ K_TIMER_DEFINE(telemetry_timer, telemetry_check_event, NULL);
 /* Security tag for fetching certs */
 static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
 
+/* Message queue */
+K_MSGQ_DEFINE(m_rx_queue, sizeof(struct pyrinas_cloud_evt), 24, 4);
+
 /* Buffers for MQTT client. */
 static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
 static uint8_t tx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
-static uint8_t payload_buf[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
 static uint8_t topic_buf[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
 
 /* IMEI storage */
@@ -71,6 +73,7 @@ static atomic_t connection_poll_active;
 static struct pollfd fds;
 
 /* Structures for work */
+static struct k_work publish_event_work;
 static struct k_work publish_telemetry_work;
 static struct k_work ota_request_work;
 static struct k_work ota_done_work;
@@ -262,7 +265,7 @@ static int publish_get_payload(struct mqtt_client *c,
     uint8_t *buf = write_buf;
     uint8_t *end = buf + length;
 
-    if (length > sizeof(payload_buf))
+    if (length > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE)
     {
         return -EMSGSIZE;
     }
@@ -481,14 +484,23 @@ static void fota_start_fn(struct k_work *unused)
 #endif
 }
 
-static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_t data_len)
+static void publish_event_work_fn(struct k_work *unused)
 {
     int result = 0;
 
-    /* If its the OTA sub topic process */
-    if (strncmp(ota_sub_topic, topic, strlen(ota_sub_topic)) == 0)
+    struct pyrinas_cloud_evt message;
+
+    int err = k_msgq_get(&m_rx_queue, &message, K_NO_WAIT);
+    if (err)
     {
-        LOG_INF("Found %s. Data size: %d", ota_sub_topic, data_len);
+        LOG_WRN("Unable to fetch message!");
+        return;
+    }
+
+    /* If its the OTA sub topic process */
+    if (strncmp(ota_sub_topic, message.data.msg.topic, message.data.msg.topic_len) == 0)
+    {
+        LOG_DBG("Found %s. Data: %s Data size: %d", ota_sub_topic, message.data.msg.data, message.data.msg.data_len);
 
         /* Set check flag */
         atomic_set(&initial_ota_check, 1);
@@ -497,7 +509,7 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
         memset(&ota_package, 0, sizeof(ota_package));
 
         /* Parse OTA event */
-        int err = decode_ota_package(&ota_package, data, data_len);
+        int err = decode_ota_package(&ota_package, message.data.msg.data, message.data.msg.data_len);
 
         uint8_t ver[64];
         get_version_string(ver, sizeof(ver));
@@ -571,13 +583,15 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
         if (callbacks[i] == NULL)
             continue;
 
+        LOG_DBG("%s %d", message.data.msg.data, message.data.msg.topic_len);
+
         /* Determine if this is the topic*/
-        if (strncmp(callbacks[i]->full_topic, topic, topic_len) == 0)
+        if (strncmp(callbacks[i]->full_topic, message.data.msg.topic, message.data.msg.topic_len) == 0)
         {
             LOG_DBG("Found %s\n", callbacks[i]->topic);
 
             /* Callbacks to app context */
-            callbacks[i]->cb(callbacks[i]->topic, callbacks[i]->topic_len, data, data_len);
+            callbacks[i]->cb(callbacks[i]->topic, callbacks[i]->topic_len, message.data.msg.data, message.data.msg.data_len);
 
             /* Found it,lets break */
             break;
@@ -587,15 +601,7 @@ static void publish_evt_handler(char *topic, size_t topic_len, char *data, size_
     /* Send to calback */
     if (m_config.evt_cb)
     {
-        struct pyrinas_cloud_evt evt = {
-            .type = PYRINAS_CLOUD_EVT_DATA_RECIEVED,
-            .data = {
-                .msg = {
-                    .data = data,
-                    .data_len = data_len,
-                    .topic = topic,
-                    .topic_len = topic_len}}};
-        m_config.evt_cb(&evt);
+        m_config.evt_cb(&message);
     }
 }
 
@@ -669,6 +675,25 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
     {
         const struct mqtt_publish_param *p = &evt->param.publish;
 
+        /* Make sure buffer wont overflow */
+        if (p->message.payload.len > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE ||
+            p->message.topic.topic.size > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE)
+        {
+            LOG_WRN("MQTT payload oversized!");
+            return;
+        }
+
+        struct pyrinas_cloud_evt message = {
+            .type = PYRINAS_CLOUD_EVT_DATA_RECIEVED,
+            .data = {
+                .msg = {
+                    .data_len = p->message.payload.len,
+                    .topic_len = p->message.topic.topic.size}}};
+
+        /* Memset data */
+        memset(message.data.msg.data, 0, sizeof(message.data.msg.data));
+        memset(message.data.msg.topic, 0, sizeof(message.data.msg.topic));
+
         /* Make sure the topic fits.*/
         if (p->message.topic.topic.size > sizeof(topic_buf))
         {
@@ -676,16 +701,25 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             break;
         }
 
-        memcpy(topic_buf, p->message.topic.topic.utf8, p->message.topic.topic.size);
+        /* Copy topic */
+        memcpy(message.data.msg.topic, p->message.topic.topic.utf8, p->message.topic.topic.size);
 
-        LOG_DBG("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d", __func__,
+        LOG_INF("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d", __func__,
                 __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
-        err = publish_get_payload(c, payload_buf, p->message.payload.len);
+
+        err = publish_get_payload(c, message.data.msg.data, p->message.payload.len);
         if (err >= 0)
         {
 
-            /* Handle the event */
-            publish_evt_handler(topic_buf, p->message.topic.topic.size, payload_buf, p->message.payload.len);
+            /* Save to message queue */
+            err = k_msgq_put(&m_rx_queue, &message, K_NO_WAIT);
+            if (err)
+            {
+                LOG_ERR("Unable to add rx event.");
+            }
+
+            /* Then start processing! */
+            k_work_submit_to_queue(&cloud_work_q, &publish_event_work);
         }
         else
         {
@@ -833,6 +867,7 @@ static void work_init()
     k_work_init(&ota_request_work, ota_request_work_fn);
     k_work_init(&ota_done_work, ota_done_work_fn);
     k_work_init(&publish_telemetry_work, publish_telemetry_work_fn);
+    k_work_init(&publish_event_work, publish_event_work_fn);
 }
 
 /**@brief Initialize the MQTT client structure
@@ -1215,7 +1250,7 @@ void pyrinas_cloud_process()
     mqtt_live(&client);
 }
 
-#define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(3)
+#define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(2)
 K_THREAD_DEFINE(pyrinas_cloud_thread, PYRINAS_CLOUD_THREAD_STACK_SIZE,
                 pyrinas_cloud_poll, NULL, NULL, NULL,
                 K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);

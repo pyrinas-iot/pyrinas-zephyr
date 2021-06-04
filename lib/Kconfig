@@ -20,7 +20,7 @@ if PYRINAS_BLUETOOTH_ENABLED
 
 config PYRINAS_BLUETOOTH_WORKQUEUE_STACK_SIZE
 	int "Bluetooth workqueue stack size"
-	default 2048
+	default 4096
 
 config PYRINAS_BLUETOOTH_WORKQUEUE_PRIORITY
 	int "Bluetooth workqueue priority"

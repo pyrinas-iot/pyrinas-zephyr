@@ -58,9 +58,9 @@ enum pyrinas_cloud_evt_type
 
 struct pyrinas_cloud_evt_data
 {
-  char *topic;
+  char topic[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
   size_t topic_len;
-  char *data;
+  char data[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
   size_t data_len;
 };
 
