@@ -38,6 +38,7 @@ static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
 
 /* Message queue */
 K_MSGQ_DEFINE(m_rx_queue, sizeof(struct pyrinas_cloud_evt), 24, 4);
+K_MSGQ_DEFINE(m_tx_queue, sizeof(struct pyrinas_cloud_evt), 24, 4);
 
 /* Buffers for MQTT client. */
 static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
@@ -73,7 +74,8 @@ static atomic_t connection_poll_active;
 static struct pollfd fds;
 
 /* Structures for work */
-static struct k_work publish_event_work;
+static struct k_work rx_event_work;
+static struct k_work tx_event_work;
 static struct k_work publish_telemetry_work;
 static struct k_work ota_request_work;
 static struct k_work ota_done_work;
@@ -484,7 +486,7 @@ static void fota_start_fn(struct k_work *unused)
 #endif
 }
 
-static void publish_event_work_fn(struct k_work *unused)
+static void rx_event_work_fn(struct k_work *unused)
 {
     int result = 0;
 
@@ -719,7 +721,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             }
 
             /* Then start processing! */
-            k_work_submit_to_queue(&cloud_work_q, &publish_event_work);
+            k_work_submit_to_queue(&cloud_work_q, &rx_event_work);
         }
         else
         {
@@ -854,6 +856,20 @@ static void ota_done_work_fn(struct k_work *unused)
     publish_ota_done();
 }
 
+static void tx_event_work_fn(struct k_work *unused)
+{
+    struct pyrinas_cloud_evt_data message;
+
+    int err = k_msgq_get(&m_tx_queue, &message, K_NO_WAIT);
+    if (err)
+    {
+        LOG_WRN("Unable to fetch message!");
+        return;
+    }
+
+    data_publish(message.topic, message.topic_len, message.data, message.data_len, sys_rand32_get());
+}
+
 static void work_init()
 {
 
@@ -867,7 +883,8 @@ static void work_init()
     k_work_init(&ota_request_work, ota_request_work_fn);
     k_work_init(&ota_done_work, ota_done_work_fn);
     k_work_init(&publish_telemetry_work, publish_telemetry_work_fn);
-    k_work_init(&publish_event_work, publish_event_work_fn);
+    k_work_init(&rx_event_work, rx_event_work_fn);
+    k_work_init(&tx_event_work, tx_event_work_fn);
 }
 
 /**@brief Initialize the MQTT client structure
@@ -1038,12 +1055,10 @@ void pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
 {
 
-    char topic[256];
     char uid[14];
-    char buf[64];
-    size_t payload_len = 0;
     int err = 0;
 
+    struct pyrinas_cloud_evt_data message;
     struct pyrinas_cloud_telemetry_data data;
 
     /* Memset uid */
@@ -1070,7 +1085,7 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
     LOG_DBG("Rssi: %i %i", data.central_rssi, data.peripheral_rssi);
 
     /* Encode data */
-    err = encode_telemetry_data(&data, buf, sizeof(buf), &payload_len);
+    err = encode_telemetry_data(&data, (uint8_t *)message.data, sizeof(message.data), &message.data_len);
     if (err)
     {
         LOG_ERR("Unable to encode telemetry data.");
@@ -1083,19 +1098,36 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
              evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
 
     /* Create topic */
-    snprintf(topic, sizeof(topic),
+    snprintf(message.topic, sizeof(message.topic),
              CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC,
              strlen(uid), uid);
 
-    /* Publish the data */
-    return data_publish(topic, strlen(topic), buf, payload_len, sys_rand32_get());
+    /* Get topic length */
+    message.topic_len = strlen(message.topic);
+
+    /* Put data */
+    err = k_msgq_put(&m_tx_queue, &message, K_NO_WAIT);
+
+    /* Queue work task */
+    k_work_submit_to_queue(&cloud_work_q, &tx_event_work);
+
+    return err;
 }
 
 int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
 {
-    char topic[256];
+
+    struct pyrinas_cloud_evt_data message;
     char uid[14];
     int err;
+
+    /* Confirm we're using sanitary data */
+    if (evt->name.size > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE ||
+        evt->data.size > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE)
+    {
+        LOG_WRN("Data oversized!");
+        return -EINVAL;
+    }
 
     /* Memset uid */
     memset(uid, 0, sizeof(uid));
@@ -1108,33 +1140,56 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     LOG_DBG("Sending from [%s] %s.", log_strdup(uid), log_strdup(evt->name.bytes));
 
     /* Create topic */
-    snprintf(topic, sizeof(topic),
+    snprintf(message.topic, sizeof(message.topic),
              CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
              strlen(uid), uid,
              evt->name.size, evt->name.bytes);
 
-    /* Publish the data */
-    err = data_publish(topic, strlen(topic), evt->data.bytes, evt->data.size, sys_rand32_get());
-    if (err)
-    {
-        LOG_WRN("Unable to publish. Err: %i", err);
-    }
+    /* Set the rest*/
+    message.topic_len = strlen(message.topic);
+    message.data_len = evt->data.size;
+    memcpy(message.data, evt->data.bytes, evt->data.size);
+
+    /* Put data */
+    err = k_msgq_put(&m_tx_queue, &message, K_NO_WAIT);
+
+    /* Queue work task */
+    k_work_submit_to_queue(&cloud_work_q, &tx_event_work);
 
     return err;
 }
 
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
 {
-    char topic[256];
+    int err;
+    struct pyrinas_cloud_evt_data message;
+
+    /* Confirm we're using sanitary data */
+    if (strlen(type) > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE ||
+        len > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE)
+    {
+        LOG_WRN("Data oversized!");
+        return -EINVAL;
+    }
 
     /* Create topic */
-    snprintf(topic, sizeof(topic),
+    snprintf(message.topic, sizeof(message.topic),
              CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
              sizeof(imei), imei,
              strlen(type), type);
 
-    /* Publish the data */
-    return data_publish(topic, strlen(topic), data, len, sys_rand32_get());
+    /* Set the rest*/
+    message.topic_len = strlen(message.topic);
+    message.data_len = len;
+    memcpy(message.data, data, len);
+
+    /* Put data */
+    err = k_msgq_put(&m_tx_queue, &message, K_NO_WAIT);
+
+    /* Queue work task */
+    k_work_submit_to_queue(&cloud_work_q, &tx_event_work);
+
+    return err;
 }
 
 void pyrinas_cloud_poll(void)
