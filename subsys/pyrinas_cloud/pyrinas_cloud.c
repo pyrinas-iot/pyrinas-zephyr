@@ -492,118 +492,122 @@ static void rx_event_work_fn(struct k_work *unused)
 
     struct pyrinas_cloud_evt message;
 
-    int err = k_msgq_get(&m_rx_queue, &message, K_NO_WAIT);
-    if (err)
+    while (k_msgq_num_used_get(&m_rx_queue))
     {
-        LOG_WRN("Unable to fetch message!");
-        return;
-    }
 
-    /* If its the OTA sub topic process */
-    if (strncmp(ota_sub_topic, message.data.msg.topic, message.data.msg.topic_len) == 0)
-    {
-        LOG_DBG("Found %s. Data: %s Data size: %d", ota_sub_topic, message.data.msg.data, message.data.msg.data_len);
-
-        /* Set check flag */
-        atomic_set(&initial_ota_check, 1);
-
-        /* Reset ota_package conents */
-        memset(&ota_package, 0, sizeof(ota_package));
-
-        /* Parse OTA event */
-        int err = decode_ota_package(&ota_package, message.data.msg.data, message.data.msg.data_len);
-
-        uint8_t ver[64];
-        get_version_string(ver, sizeof(ver));
-        LOG_INF("Current Version: %s", ver);
-
-        /* If error then no update available */
-        if (err == 0)
+        int err = k_msgq_get(&m_rx_queue, &message, K_NO_WAIT);
+        if (err)
         {
-
-            /* Check numeric */
-            result = ver_comp(&pyrinas_version, &ota_package.version);
-
-            /* Print result */
-            LOG_INF("New version? %s ", result == 1 ? "true" : "false");
-        }
-        else
-        {
-            LOG_WRN("Unable to decode OTA data");
+            LOG_WRN("Unable to fetch message!");
+            return;
         }
 
-        /* If incoming is greater or hash is not equal */
-        if (result == 1)
+        /* If its the OTA sub topic process */
+        if (strncmp(ota_sub_topic, message.data.msg.topic, message.data.msg.topic_len) == 0)
         {
+            LOG_DBG("Found %s. Data: %s Data size: %d", ota_sub_topic, message.data.msg.data, message.data.msg.data_len);
 
-            LOG_INF("Start upgrade");
+            /* Set check flag */
+            atomic_set(&initial_ota_check, 1);
 
-            /* Set OTA State */
-            atomic_set(&ota_state_s, ota_state_started);
+            /* Reset ota_package conents */
+            memset(&ota_package, 0, sizeof(ota_package));
 
-            /* Send to calback */
-            if (m_config.evt_cb)
+            /* Parse OTA event */
+            int err = decode_ota_package(&ota_package, message.data.msg.data, message.data.msg.data_len);
+
+            uint8_t ver[64];
+            get_version_string(ver, sizeof(ver));
+            LOG_INF("Current Version: %s", ver);
+
+            /* If error then no update available */
+            if (err == 0)
             {
-                struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_START};
-                m_config.evt_cb(&evt);
+
+                /* Check numeric */
+                result = ver_comp(&pyrinas_version, &ota_package.version);
+
+                /* Print result */
+                LOG_INF("New version? %s ", result == 1 ? "true" : "false");
+            }
+            else
+            {
+                LOG_WRN("Unable to decode OTA data");
             }
 
-            /* Start upgrade here*/
-            k_delayed_work_submit_to_queue(&cloud_work_q, &fota_work, K_SECONDS(5));
-        }
-        else
-        {
-
-            LOG_INF("No update.");
-
-            /* If there wasn't an issue with OTA, continue on our merry way*/
-            if (atomic_get(&ota_state_s) == ota_state_ready)
+            /* If incoming is greater or hash is not equal */
+            if (result == 1)
             {
-                LOG_INF("Ota ready.");
+
+                LOG_INF("Start upgrade");
+
+                /* Set OTA State */
+                atomic_set(&ota_state_s, ota_state_started);
 
                 /* Send to calback */
                 if (m_config.evt_cb)
                 {
-                    struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_READY};
+                    struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_START};
                     m_config.evt_cb(&evt);
                 }
 
-                /* Let the backend know we're done */
-                k_work_submit_to_queue(&cloud_work_q, &ota_done_work);
+                /* Start upgrade here*/
+                k_delayed_work_submit_to_queue(&cloud_work_q, &fota_work, K_SECONDS(5));
+            }
+            else
+            {
 
-                /* Subscribe to Application topic */
-                subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
+                LOG_INF("No update.");
+
+                /* If there wasn't an issue with OTA, continue on our merry way*/
+                if (atomic_get(&ota_state_s) == ota_state_ready)
+                {
+                    LOG_INF("Ota ready.");
+
+                    /* Send to calback */
+                    if (m_config.evt_cb)
+                    {
+                        struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_READY};
+                        m_config.evt_cb(&evt);
+                    }
+
+                    /* Let the backend know we're done */
+                    k_work_submit_to_queue(&cloud_work_q, &ota_done_work);
+
+                    /* Subscribe to Application topic */
+                    subscribe(application_sub_topic, strlen(application_sub_topic), sys_rand32_get());
+                }
+            }
+
+            return;
+        }
+
+        for (int i = 0; i < CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT; i++)
+        {
+            /* Continue if null */
+            if (callbacks[i] == NULL)
+                continue;
+
+            LOG_DBG("%s %d", message.data.msg.data, message.data.msg.topic_len);
+
+            /* Determine if this is the topic*/
+            if (strncmp(callbacks[i]->full_topic, message.data.msg.topic, message.data.msg.topic_len) == 0)
+            {
+                LOG_DBG("Found %s\n", callbacks[i]->topic);
+
+                /* Callbacks to app context */
+                callbacks[i]->cb(callbacks[i]->topic, callbacks[i]->topic_len, message.data.msg.data, message.data.msg.data_len);
+
+                /* Found it,lets break */
+                break;
             }
         }
 
-        return;
-    }
-
-    for (int i = 0; i < CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT; i++)
-    {
-        /* Continue if null */
-        if (callbacks[i] == NULL)
-            continue;
-
-        LOG_DBG("%s %d", message.data.msg.data, message.data.msg.topic_len);
-
-        /* Determine if this is the topic*/
-        if (strncmp(callbacks[i]->full_topic, message.data.msg.topic, message.data.msg.topic_len) == 0)
+        /* Send to calback */
+        if (m_config.evt_cb)
         {
-            LOG_DBG("Found %s\n", callbacks[i]->topic);
-
-            /* Callbacks to app context */
-            callbacks[i]->cb(callbacks[i]->topic, callbacks[i]->topic_len, message.data.msg.data, message.data.msg.data_len);
-
-            /* Found it,lets break */
-            break;
+            m_config.evt_cb(&message);
         }
-    }
-
-    /* Send to calback */
-    if (m_config.evt_cb)
-    {
-        m_config.evt_cb(&message);
     }
 }
 
@@ -860,14 +864,18 @@ static void tx_event_work_fn(struct k_work *unused)
 {
     struct pyrinas_cloud_evt_data message;
 
-    int err = k_msgq_get(&m_tx_queue, &message, K_NO_WAIT);
-    if (err)
+    while (k_msgq_num_used_get(&m_tx_queue))
     {
-        LOG_WRN("Unable to fetch message!");
-        return;
-    }
 
-    data_publish(message.topic, message.topic_len, message.data, message.data_len, sys_rand32_get());
+        int err = k_msgq_get(&m_tx_queue, &message, K_NO_WAIT);
+        if (err)
+        {
+            LOG_WRN("Unable to fetch message!");
+            return;
+        }
+
+        data_publish(message.topic, message.topic_len, message.data, message.data_len, sys_rand32_get());
+    }
 }
 
 static void work_init()
@@ -1060,7 +1068,6 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
 
     struct pyrinas_cloud_evt_data message;
     struct pyrinas_cloud_telemetry_data data;
-
     /* Memset uid */
     memset(uid, 0, sizeof(uid));
 
