@@ -28,6 +28,9 @@ QCBORError encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t 
     /* Create over-arching map */
     QCBOREncode_OpenMap(&ec);
     QCBOREncode_AddUInt64ToMapN(&ec, 0, cmd_type);
+
+    /* Since this is v2, let's request v2!*/
+    QCBOREncode_AddUInt64ToMapN(&ec, 1, ota_request_version_v2);
     QCBOREncode_CloseMap(&ec);
 
     /* Finish and get size */

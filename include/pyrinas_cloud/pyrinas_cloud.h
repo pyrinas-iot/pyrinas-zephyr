@@ -40,6 +40,14 @@ enum pyrinas_cloud_ota_cmd_type
   ota_cmd_type_done,
 };
 
+/* Used to determine which OTA verison to use */
+enum pyrinas_cloud_ota_request_version
+{
+  ota_request_version_unknown = 0,
+  ota_request_version_v1,
+  ota_request_version_v2,
+};
+
 /* Event type */
 enum pyrinas_cloud_evt_type
 {
