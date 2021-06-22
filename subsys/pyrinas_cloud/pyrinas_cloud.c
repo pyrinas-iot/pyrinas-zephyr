@@ -317,15 +317,13 @@ int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *data)
 {
 
     int err;
-    char buf[64];
-    size_t payload_len = 0;
     struct pyrinas_cloud_evt_data message;
 
     /* Malloc */
     message.data = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE);
 
     /* Encode data */
-    err = encode_telemetry_data(data, buf, sizeof(buf), &payload_len);
+    err = encode_telemetry_data(data, message.data, CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE, &message.data_len);
     if (err)
     {
         LOG_ERR("Unable to encode telemetry data.");
@@ -333,10 +331,11 @@ int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *data)
     }
 
     /* Malloc */
-    message.topic = k_malloc(strlen(telemetry_pub_topic));
+    message.topic_len = strlen(telemetry_pub_topic);
+    message.topic = k_malloc(message.topic_len);
 
     /* Copy data */
-    memcpy(message.topic, telemetry_pub_topic, strlen(telemetry_pub_topic));
+    memcpy(message.topic, telemetry_pub_topic, message.topic_len);
 
     /* Put data */
     err = k_msgq_put(&m_tx_queue, &message, K_NO_WAIT);
