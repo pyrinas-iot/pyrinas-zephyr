@@ -66,9 +66,9 @@ enum pyrinas_cloud_evt_type
 
 struct pyrinas_cloud_evt_data
 {
-  char topic[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
+  char *topic;
   size_t topic_len;
-  char data[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
+  char *data;
   size_t data_len;
 };
 
@@ -196,6 +196,9 @@ int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len);
 
 /* Publish telemetry only */
 int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt);
+
+/* Publish telemetry data */
+int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *data);
 
 /* Used during polling process */
 void pyrinas_cloud_process();

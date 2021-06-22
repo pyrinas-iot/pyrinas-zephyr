@@ -10,13 +10,11 @@
 #include <net/mqtt.h>
 #include <net/socket.h>
 #include <modem/at_cmd.h>
-#include <pyrinas_cloud/pyrinas_cloud.h>
-
 #include <net/fota_download.h>
-#include <cellular/cellular.h>
-
 #include <assert.h>
+
 #include <app/version.h>
+#include <pyrinas_cloud/pyrinas_cloud.h>
 
 #include "pyrinas_cloud_codec.h"
 #include "pyrinas_cloud_helper.h"
@@ -24,14 +22,8 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(pyrinas_cloud);
 
-static void telemetry_check_event(struct k_timer *timer);
-K_TIMER_DEFINE(telemetry_timer, telemetry_check_event, NULL);
-
 /*FDS related*/
 #define INVALID_FDS -1
-
-/* Telemetry interval */
-#define TELEMETRY_INTERVAL K_MINUTES(30)
 
 /* Security tag for fetching certs */
 static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
@@ -43,7 +35,6 @@ K_MSGQ_DEFINE(m_tx_queue, sizeof(struct pyrinas_cloud_evt), 24, 4);
 /* Buffers for MQTT client. */
 static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
 static uint8_t tx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
-static uint8_t topic_buf[CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE];
 
 /* IMEI storage */
 #define CGSN_RESP_LEN 19
@@ -76,7 +67,6 @@ static struct pollfd fds;
 /* Structures for work */
 static struct k_work rx_event_work;
 static struct k_work tx_event_work;
-static struct k_work publish_telemetry_work;
 static struct k_work ota_request_work;
 static struct k_work ota_done_work;
 static struct k_work on_connect_work;
@@ -267,7 +257,7 @@ static int publish_get_payload(struct mqtt_client *c,
     uint8_t *buf = write_buf;
     uint8_t *end = buf + length;
 
-    if (length > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE)
+    if (length > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE)
     {
         return -EMSGSIZE;
     }
@@ -323,75 +313,58 @@ static void publish_ota_done()
 }
 
 /* Publish central/hub telemetry */
-static void publish_telemetry(bool has_version)
+int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *data)
 {
 
-    struct pyrinas_cloud_telemetry_data data;
+    int err;
     char buf[64];
     size_t payload_len = 0;
-    int err = 0;
+    struct pyrinas_cloud_evt_data message;
 
-    /* Not used here.. */
-    data.has_central_rssi = false;
-    data.has_peripheral_rssi = false;
-
-    /*Get rsrp*/
-    char rsrp = cellular_get_signal_strength();
-    if (rsrp <= RSRP_THRESHOLD)
-    {
-        data.has_rsrp = true;
-        data.rsrp = rsrp;
-    }
-    else
-    {
-        data.has_rsrp = false;
-    }
-
-    LOG_INF("RSRP %d %i", data.has_rsrp, data.rsrp);
-
-    /* Copy over version string */
-    data.has_version = has_version;
-    if (has_version)
-        get_version_string(data.version, sizeof(data.version));
+    /* Malloc */
+    message.data = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE);
 
     /* Encode data */
-    err = encode_telemetry_data(&data, buf, sizeof(buf), &payload_len);
+    err = encode_telemetry_data(data, buf, sizeof(buf), &payload_len);
     if (err)
     {
         LOG_ERR("Unable to encode telemetry data.");
-        return;
+        return err;
     }
 
-    /* Publish telemetry */
-    err = data_publish(telemetry_pub_topic, strlen(telemetry_pub_topic), buf, payload_len, sys_rand32_get());
-    if (err)
-    {
-        LOG_ERR("Unable to publish telemetry. Error: %d", err);
-    }
-}
+    /* Malloc */
+    message.topic = k_malloc(strlen(telemetry_pub_topic));
 
-static void publish_telemetry_work_fn(struct k_work *unused)
-{
-    /* Publish telemetry */
-    publish_telemetry(false);
-}
+    /* Copy data */
+    memcpy(message.topic, telemetry_pub_topic, strlen(telemetry_pub_topic));
 
-static void telemetry_check_event(struct k_timer *timer)
-{
+    /* Put data */
+    err = k_msgq_put(&m_tx_queue, &message, K_NO_WAIT);
 
-    /* Publish from work queue or else hard fault */
-    k_work_submit_to_queue(&cloud_work_q, &publish_telemetry_work);
+    /* Queue work task */
+    k_work_submit_to_queue(&cloud_work_q, &tx_event_work);
 
-    /* Restart timer */
-    k_timer_start(&telemetry_timer, TELEMETRY_INTERVAL, K_NO_WAIT);
+    return 0;
 }
 
 static void on_connect_fn(struct k_work *unused)
 {
     LOG_DBG("[%s:%d] on connect work function!", __func__, __LINE__);
 
+    /* Data */
+    struct pyrinas_cloud_telemetry_data data = {
+        .has_version = true,
+    };
+
+    /* Get version string */
+    get_version_string(data.version, sizeof(data.version));
+
     /* Publish telemetry */
-    publish_telemetry(true);
+    int err = pyrinas_cloud_publish_telemetry(&data);
+    if (err)
+    {
+        LOG_ERR("Error publishing telemetry: %i", err);
+    }
 
     /* Trigger OTA check */
     if (atomic_get(&ota_state_s) == ota_state_ready)
@@ -579,6 +552,10 @@ static void rx_event_work_fn(struct k_work *unused)
                 }
             }
 
+            /* Free */
+            k_free(message.data.msg.data);
+            k_free(message.data.msg.topic);
+
             return;
         }
 
@@ -608,6 +585,10 @@ static void rx_event_work_fn(struct k_work *unused)
         {
             m_config.evt_cb(&message);
         }
+
+        /* Free */
+        k_free(message.data.msg.data);
+        k_free(message.data.msg.topic);
     }
 }
 
@@ -649,18 +630,12 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         /* On connect work */
         k_work_submit_to_queue(&cloud_work_q, &on_connect_work);
 
-        /*Start telemetry timer every TELEMETRY_INTERVAL */
-        k_timer_start(&telemetry_timer, TELEMETRY_INTERVAL, K_NO_WAIT);
-
         break;
     }
 
     case MQTT_EVT_DISCONNECT:
         LOG_WRN("[%s:%d] MQTT client disconnected %d", __func__,
                 __LINE__, evt->result);
-
-        /* Stop the timer, we're disconnected*/
-        k_timer_stop(&telemetry_timer);
 
         /* Set state */
         atomic_set(&cloud_state_s, cloud_state_disconnected);
@@ -681,14 +656,6 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
     {
         const struct mqtt_publish_param *p = &evt->param.publish;
 
-        /* Make sure buffer wont overflow */
-        if (p->message.payload.len > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE ||
-            p->message.topic.topic.size > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE)
-        {
-            LOG_WRN("MQTT payload oversized!");
-            return;
-        }
-
         struct pyrinas_cloud_evt message = {
             .type = PYRINAS_CLOUD_EVT_DATA_RECIEVED,
             .data = {
@@ -696,16 +663,9 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
                     .data_len = p->message.payload.len,
                     .topic_len = p->message.topic.topic.size}}};
 
-        /* Memset data */
-        memset(message.data.msg.data, 0, sizeof(message.data.msg.data));
-        memset(message.data.msg.topic, 0, sizeof(message.data.msg.topic));
-
-        /* Make sure the topic fits.*/
-        if (p->message.topic.topic.size > sizeof(topic_buf))
-        {
-            LOG_WRN("Incoming topic is too large!");
-            break;
-        }
+        /* Malloc */
+        message.data.msg.data = k_malloc(p->message.payload.len);
+        message.data.msg.topic = k_malloc(p->message.topic.topic.size);
 
         /* Copy topic */
         memcpy(message.data.msg.topic, p->message.topic.topic.utf8, p->message.topic.topic.size);
@@ -875,6 +835,10 @@ static void tx_event_work_fn(struct k_work *unused)
         }
 
         data_publish(message.topic, message.topic_len, message.data, message.data_len, sys_rand32_get());
+
+        /* Free */
+        k_free(message.data);
+        k_free(message.topic);
     }
 }
 
@@ -890,7 +854,6 @@ static void work_init()
     k_work_init(&on_connect_work, on_connect_fn);
     k_work_init(&ota_request_work, ota_request_work_fn);
     k_work_init(&ota_done_work, ota_done_work_fn);
-    k_work_init(&publish_telemetry_work, publish_telemetry_work_fn);
     k_work_init(&rx_event_work, rx_event_work_fn);
     k_work_init(&tx_event_work, tx_event_work_fn);
 }
@@ -1091,11 +1054,15 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
 
     LOG_DBG("Rssi: %i %i", data.central_rssi, data.peripheral_rssi);
 
+    /* Malloc */
+    message.data = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE);
+
     /* Encode data */
     err = encode_telemetry_data(&data, (uint8_t *)message.data, sizeof(message.data), &message.data_len);
     if (err)
     {
         LOG_ERR("Unable to encode telemetry data.");
+        k_free(message.data);
         return err;
     }
 
@@ -1104,8 +1071,11 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
              evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
              evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
 
+    /* Malloc */
+    message.topic = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE);
+
     /* Create topic */
-    snprintf(message.topic, sizeof(message.topic),
+    snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
              CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC,
              strlen(uid), uid);
 
@@ -1128,14 +1098,6 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     char uid[14];
     int err;
 
-    /* Confirm we're using sanitary data */
-    if (evt->name.size > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE ||
-        evt->data.size > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE)
-    {
-        LOG_WRN("Data oversized!");
-        return -EINVAL;
-    }
-
     /* Memset uid */
     memset(uid, 0, sizeof(uid));
 
@@ -1146,8 +1108,11 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
 
     LOG_DBG("Sending from [%s] %s.", log_strdup(uid), log_strdup(evt->name.bytes));
 
+    /* Malloc */
+    message.topic = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE);
+
     /* Create topic */
-    snprintf(message.topic, sizeof(message.topic),
+    snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
              CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
              strlen(uid), uid,
              evt->name.size, evt->name.bytes);
@@ -1155,6 +1120,11 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     /* Set the rest*/
     message.topic_len = strlen(message.topic);
     message.data_len = evt->data.size;
+
+    /* Malloc */
+    message.data = k_malloc(evt->data.size);
+
+    /* Copy data */
     memcpy(message.data, evt->data.bytes, evt->data.size);
 
     /* Put data */
@@ -1171,16 +1141,11 @@ int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
     int err;
     struct pyrinas_cloud_evt_data message;
 
-    /* Confirm we're using sanitary data */
-    if (strlen(type) > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE ||
-        len > CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE)
-    {
-        LOG_WRN("Data oversized!");
-        return -EINVAL;
-    }
+    /* Malloc */
+    message.topic = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE);
 
     /* Create topic */
-    snprintf(message.topic, sizeof(message.topic),
+    snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
              CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
              sizeof(imei), imei,
              strlen(type), type);
@@ -1188,6 +1153,11 @@ int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
     /* Set the rest*/
     message.topic_len = strlen(message.topic);
     message.data_len = len;
+
+    /* Malloc */
+    message.data = k_malloc(len);
+
+    /* Copy data */
     memcpy(message.data, data, len);
 
     /* Put data */

@@ -80,11 +80,15 @@ config PYRINAS_CLOUD_MQTT_BROKER_PORT
 
 config PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE
 	int "MQTT message buffer size"
+	default 512
+
+config PYRINAS_CLOUD_MQTT_TOPIC_SIZE
+	int "MQTT topic size"
 	default 128
 
-config PYRINAS_CLOUD_MQTT_PAYLOAD_BUFFER_SIZE
-	int "MQTT payload buffer size"
-	default 128
+config PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE
+	int "MQTT payload size"
+	default 512
 
 config PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT
 	int "Max application callback count."
