@@ -320,10 +320,10 @@ int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *data)
     struct pyrinas_cloud_evt_data message;
 
     /* Malloc */
-    message.data = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE);
+    message.data = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE);
 
     /* Encode data */
-    err = encode_telemetry_data(data, message.data, CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE, &message.data_len);
+    err = encode_telemetry_data(data, message.data, CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE, &message.data_len);
     if (err)
     {
         LOG_ERR("Unable to encode telemetry data.");
@@ -1030,6 +1030,7 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
 
     struct pyrinas_cloud_evt_data message;
     struct pyrinas_cloud_telemetry_data data;
+
     /* Memset uid */
     memset(uid, 0, sizeof(uid));
 
@@ -1054,10 +1055,10 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
     LOG_DBG("Rssi: %i %i", data.central_rssi, data.peripheral_rssi);
 
     /* Malloc */
-    message.data = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE);
+    message.data = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE);
 
     /* Encode data */
-    err = encode_telemetry_data(&data, (uint8_t *)message.data, sizeof(message.data), &message.data_len);
+    err = encode_telemetry_data(&data, (uint8_t *)message.data, CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE, &message.data_len);
     if (err)
     {
         LOG_ERR("Unable to encode telemetry data.");
@@ -1066,17 +1067,31 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
     }
 
     /* Get peripheral address */
-    snprintf(uid, sizeof(uid), "%02x%02x%02x%02x%02x%02x",
-             evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
-             evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
+    err = snprintf(uid, sizeof(uid), "%02x%02x%02x%02x%02x%02x",
+                   evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
+                   evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
+
+    if (err < 0)
+    {
+        LOG_ERR("Unable to create UID. Err: %i", err);
+        k_free(message.data);
+        return err;
+    }
 
     /* Malloc */
     message.topic = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE);
 
     /* Create topic */
-    snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
-             CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC,
-             strlen(uid), uid);
+    err = snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
+                   CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC,
+                   strlen(uid), uid);
+    if (err < 0)
+    {
+        LOG_ERR("Unable to populate telemetry topic. Err: %i", err);
+        k_free(message.data);
+        k_free(message.topic);
+        return err;
+    }
 
     /* Get topic length */
     message.topic_len = strlen(message.topic);
@@ -1101,9 +1116,14 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     memset(uid, 0, sizeof(uid));
 
     /* Get peripheral address */
-    snprintf(uid, sizeof(uid), "%02x%02x%02x%02x%02x%02x",
-             evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
-             evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
+    err = snprintf(uid, sizeof(uid), "%02x%02x%02x%02x%02x%02x",
+                   evt->peripheral_addr[0], evt->peripheral_addr[1], evt->peripheral_addr[2],
+                   evt->peripheral_addr[3], evt->peripheral_addr[4], evt->peripheral_addr[5]);
+    if (err < 0)
+    {
+        LOG_ERR("Unable to create UID. Err: %i", err);
+        return err;
+    }
 
     LOG_DBG("Sending from [%s] %s.", log_strdup(uid), log_strdup(evt->name.bytes));
 
@@ -1111,10 +1131,17 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     message.topic = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE);
 
     /* Create topic */
-    snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
-             CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
-             strlen(uid), uid,
-             evt->name.size, evt->name.bytes);
+    err = snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
+                   CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
+                   strlen(uid), uid,
+                   evt->name.size, evt->name.bytes);
+    if (err < 0)
+    {
+        LOG_ERR("Unable to populate topic. Err: %i", err);
+        k_free(message.data);
+        k_free(message.topic);
+        return err;
+    }
 
     /* Set the rest*/
     message.topic_len = strlen(message.topic);
@@ -1144,10 +1171,17 @@ int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
     message.topic = k_malloc(CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE);
 
     /* Create topic */
-    snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
-             CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
-             sizeof(imei), imei,
-             strlen(type), type);
+    err = snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
+                   CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
+                   sizeof(imei), imei,
+                   strlen(type), type);
+
+    if (err < 0)
+    {
+        LOG_ERR("Unable to populate telemetry topic. Err: %i", err);
+        k_free(message.topic);
+        return err;
+    }
 
     /* Set the rest*/
     message.topic_len = strlen(message.topic);

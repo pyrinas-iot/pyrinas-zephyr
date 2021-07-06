@@ -90,6 +90,10 @@ config PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE
 	int "MQTT payload size"
 	default 512
 
+config PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE
+	int "MQTT payload size"
+	default 48
+
 config PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT
 	int "Max application callback count."
 	default 10
