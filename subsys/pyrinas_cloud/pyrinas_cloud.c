@@ -1039,11 +1039,15 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
     data.has_rsrp = false;
 
     /* Check if central RSSI */
+    /*
     if (evt->central_rssi < 0)
     {
         data.has_central_rssi = true;
         data.central_rssi = evt->central_rssi;
     }
+    */
+    /* TODO: address the fact that this is not generated! */
+    data.has_central_rssi = false;
 
     /* Check if peripheral RSSI */
     if (evt->peripheral_rssi < 0)
