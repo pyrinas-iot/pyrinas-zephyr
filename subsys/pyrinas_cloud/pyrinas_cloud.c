@@ -1224,7 +1224,14 @@ start:
         LOG_ERR("client_init %d", err);
 
         /* Send to calback */
-        if (m_config.evt_cb)
+        if (err == -EAGAIN)
+        {
+            /* Wait and retry */
+            k_sleep(K_MSEC(1000));
+            k_sem_give(&connection_poll_sem);
+            goto start;
+        }
+        else if (m_config.evt_cb)
         {
             struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
                                             .data.err = err};
