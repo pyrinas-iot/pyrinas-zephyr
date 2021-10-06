@@ -7,7 +7,6 @@
 menu "Pyrinas"
 
 rsource "lib/Kconfig"
-rsource "drivers/Kconfig"
 rsource "subsys/Kconfig"
 
 endmenu
