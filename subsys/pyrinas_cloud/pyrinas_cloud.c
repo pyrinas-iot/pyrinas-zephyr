@@ -59,7 +59,6 @@ static K_SEM_DEFINE(connection_poll_sem, 0, 1);
 static atomic_val_t cloud_state_s = ATOMIC_INIT(cloud_state_disconnected);
 static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
 static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
-static atomic_t connection_poll_active;
 
 /* File descriptor */
 static struct pollfd fds;
@@ -426,13 +425,13 @@ static void fota_start_fn(struct k_work *unused)
         return;
     }
 
-    LOG_DBG("%s/%s using tag %d\n", ota_package.files[index].host, ota_package.files[index].file, sec_tag);
+    LOG_DBG("%s/%s using tag %d", ota_package.files[index].host, ota_package.files[index].file, sec_tag);
 
     /* Start download uses default port and APN*/
     err = fota_download_start(ota_package.files[index].host, ota_package.files[index].file, sec_tag, NULL, 0);
     if (err)
     {
-        LOG_ERR("fota_download_start error %d\n", err);
+        LOG_ERR("fota_download_start error %d", err);
         atomic_set(&ota_state_s, ota_state_error);
 
         /* Send to calback */
@@ -569,7 +568,7 @@ static void rx_event_work_fn(struct k_work *unused)
             /* Determine if this is the topic*/
             if (strncmp(callbacks[i]->full_topic, message.data.msg.topic, message.data.msg.topic_len) == 0)
             {
-                LOG_DBG("Found %s\n", callbacks[i]->topic);
+                LOG_DBG("Found %s", callbacks[i]->topic);
 
                 /* Callbacks to app context */
                 callbacks[i]->cb(callbacks[i]->topic, callbacks[i]->topic_len, message.data.msg.data, message.data.msg.data_len);
@@ -745,7 +744,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         break;
 
     default:
-        LOG_INF("[%s:%d] default: %d", __func__, __LINE__, evt->type);
+        LOG_DBG("[%s:%d] default: %d", __func__, __LINE__, evt->type);
         break;
     }
 }
@@ -963,12 +962,28 @@ static void fota_evt(const struct fota_download_evt *p_evt)
 int pyrinas_cloud_connect()
 {
 
-    /* Check if thread is already active. */
-    if (atomic_get(&connection_poll_active))
+    int err;
+
+    /* Connect to MQTT */
+    err = mqtt_connect(&client);
+    if (err != 0)
     {
-        LOG_WRN("Connection poll in progress");
-        return -EINPROGRESS;
+        LOG_ERR("mqtt_connect %d", err);
+
+        /* Send to calback */
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
+                                            .data.err = err};
+            m_config.evt_cb(&evt);
+        }
+
+        return err;
     }
+
+    /* Set FDS info */
+    fds.fd = client.transport.tls.sock;
+    fds.events = POLLIN;
 
     /* Start the thread (if not already)*/
     k_sem_give(&connection_poll_sem);
@@ -995,8 +1010,9 @@ int pyrinas_cloud_disconnect()
     return 0;
 }
 
-void pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
+int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 {
+    int err;
 
     /*Set the callback*/
     m_config = *p_config;
@@ -1020,6 +1036,26 @@ void pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 
     /* Initialize workers */
     work_init();
+
+    /* Get the IMEI */
+    get_imei(imei, sizeof(imei));
+
+    /* MQTT client create */
+    err = client_init(&client, imei, sizeof(imei));
+    if (err != 0)
+    {
+        LOG_ERR("client_init %d", err);
+
+        /* Send to calback */
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
+                                            .data.err = err};
+            m_config.evt_cb(&evt);
+        }
+
+        return err;
+    }
 }
 
 int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
@@ -1210,57 +1246,8 @@ void pyrinas_cloud_poll(void)
 {
     int err;
 
-    /* Get the IMEI */
-    get_imei(imei, sizeof(imei));
-
 start:
     k_sem_take(&connection_poll_sem, K_FOREVER);
-    atomic_set(&connection_poll_active, 1);
-
-    /* MQTT client create */
-    err = client_init(&client, imei, sizeof(imei));
-    if (err != 0)
-    {
-        LOG_ERR("client_init %d", err);
-
-        /* Send to calback */
-        if (err == -EAGAIN)
-        {
-            /* Wait and retry */
-            k_sleep(K_MSEC(1000));
-            k_sem_give(&connection_poll_sem);
-            goto start;
-        }
-        else if (m_config.evt_cb)
-        {
-            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
-                                            .data.err = err};
-            m_config.evt_cb(&evt);
-        }
-
-        goto reset;
-    }
-
-    /* Connect to MQTT */
-    err = mqtt_connect(&client);
-    if (err != 0)
-    {
-        LOG_ERR("mqtt_connect %d", err);
-
-        /* Send to calback */
-        if (m_config.evt_cb)
-        {
-            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
-                                            .data.err = err};
-            m_config.evt_cb(&evt);
-        }
-
-        goto reset;
-    }
-
-    /* Set FDS info */
-    fds.fd = client.transport.tls.sock;
-    fds.events = POLLIN;
 
     while (true)
     {
@@ -1291,33 +1278,30 @@ start:
 
         if (err < 0)
         {
-            LOG_ERR("ERROR: poll %d\n", errno);
+            LOG_ERR("ERROR: poll %d", errno);
             break;
         }
 
         if ((fds.revents & POLLERR) == POLLERR)
         {
-            LOG_ERR("POLLERR\n");
+            LOG_ERR("POLLERR");
             break;
         }
 
         if ((fds.revents & POLLHUP) == POLLHUP)
         {
-            LOG_ERR("POLLHUP\n");
+            LOG_ERR("POLLHUP");
             break;
         }
 
         if ((fds.revents & POLLNVAL) == POLLNVAL)
         {
-            LOG_ERR("POLLNVAL\n");
+            LOG_ERR("POLLNVAL");
             break;
         }
     }
 
-reset:
-
-    atomic_set(&connection_poll_active, 0);
-    k_sem_take(&connection_poll_sem, K_NO_WAIT);
+    k_sem_reset(&connection_poll_sem);
     goto start;
 }
 

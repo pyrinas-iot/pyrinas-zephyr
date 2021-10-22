@@ -165,7 +165,7 @@ struct pyrinas_cloud_config
 };
 
 /* Init MQTT Client */
-void pyrinas_cloud_init(struct pyrinas_cloud_config *p_config);
+int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config);
 
 /* Connects to Pyrinas*/
 int pyrinas_cloud_connect();
