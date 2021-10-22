@@ -8,7 +8,7 @@ manifest:
   projects:
     - name: qcbor
       repo-path: QCBOR
-      revision: 1fa579b5cd28a623e02cce24685e21ef5e45164c
+      revision: 3427dee6898da78a509c2259cee65960011d775c
       path: pyrinas/ext/qcbor
       remote: qcbor
     - name: pyrinas-codec

@@ -70,8 +70,8 @@ static struct k_work tx_event_work;
 static struct k_work ota_request_work;
 static struct k_work ota_done_work;
 static struct k_work on_connect_work;
-static struct k_delayed_work ota_check_subscribed_work;
-static struct k_delayed_work fota_work;
+static struct k_work_delayable ota_check_subscribed_work;
+static struct k_work_delayable fota_work;
 
 /* Making the ota dat static */
 static struct pyrinas_cloud_ota_package ota_package;
@@ -207,7 +207,7 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     param.dup_flag = 0;
     param.retain_flag = 0;
 
-    LOG_INF("Publishing %d bytes to topic: %s len: %u", data_len, topic, topic_len);
+    LOG_INF("Publishing %d bytes to topic: %s len: %u", data_len, log_strdup(topic), topic_len);
 
     int err = mqtt_publish(&client, &param);
 
@@ -243,7 +243,7 @@ static int subscribe(char *topic, size_t len, uint16_t message_id)
     const struct mqtt_subscription_list subscription_list = {
         .list = &subscribe_topic, .list_count = 1, .message_id = message_id};
 
-    LOG_INF("Subscribing to: %s len %u", topic, len);
+    LOG_INF("Subscribing to: %s len %u", log_strdup(topic), len);
 
     return mqtt_subscribe(&client, &subscription_list);
 }
@@ -490,7 +490,7 @@ static void rx_event_work_fn(struct k_work *unused)
 
             uint8_t ver[64];
             get_version_string(ver, sizeof(ver));
-            LOG_INF("Current Version: %s", ver);
+            LOG_INF("Current Version: %s", log_strdup(ver));
 
             /* If error then no update available */
             if (err == 0)
@@ -524,7 +524,7 @@ static void rx_event_work_fn(struct k_work *unused)
                 }
 
                 /* Start upgrade here*/
-                k_delayed_work_submit_to_queue(&cloud_work_q, &fota_work, K_SECONDS(5));
+                k_work_schedule_for_queue(&cloud_work_q, &fota_work, K_SECONDS(5));
             }
             else
             {
@@ -670,7 +670,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         memcpy(message.data.msg.topic, p->message.topic.topic.utf8, p->message.topic.topic.size);
 
         LOG_INF("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d", __func__,
-                __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
+                __LINE__, evt->result, log_strdup(p->message.topic.topic.utf8), p->message.payload.len);
 
         err = publish_get_payload(c, message.data.msg.data, p->message.payload.len);
         if (err >= 0)
@@ -739,7 +739,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             k_work_submit_to_queue(&cloud_work_q, &ota_request_work);
 
             /* Delay work to make sure we are *at least* subscribed to OTA*/
-            k_delayed_work_submit_to_queue(&cloud_work_q, &ota_check_subscribed_work, K_SECONDS(5));
+            k_work_schedule_for_queue(&cloud_work_q, &ota_check_subscribed_work, K_SECONDS(5));
         }
 
         break;
@@ -844,12 +844,12 @@ static void tx_event_work_fn(struct k_work *unused)
 static void work_init()
 {
 
-    k_work_q_start(&cloud_work_q, cloud_stack_area,
-                   K_THREAD_STACK_SIZEOF(cloud_stack_area),
-                   CONFIG_PYRINAS_CLOUD_WORKQUEUE_PRIORITY);
+    k_work_queue_start(&cloud_work_q, cloud_stack_area,
+                       K_THREAD_STACK_SIZEOF(cloud_stack_area),
+                       CONFIG_PYRINAS_CLOUD_WORKQUEUE_PRIORITY, NULL);
 
-    k_delayed_work_init(&fota_work, fota_start_fn);
-    k_delayed_work_init(&ota_check_subscribed_work, ota_check_subscribed_work_fn);
+    k_work_init_delayable(&fota_work, fota_start_fn);
+    k_work_init_delayable(&ota_check_subscribed_work, ota_check_subscribed_work_fn);
     k_work_init(&on_connect_work, on_connect_fn);
     k_work_init(&ota_request_work, ota_request_work_fn);
     k_work_init(&ota_done_work, ota_done_work_fn);
@@ -1315,6 +1315,7 @@ start:
     }
 
 reset:
+
     atomic_set(&connection_poll_active, 0);
     k_sem_take(&connection_poll_sem, K_NO_WAIT);
     goto start;

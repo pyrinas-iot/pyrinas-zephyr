@@ -9,6 +9,9 @@ menu "Pyrinas Cloud"
 config PYRINAS_CLOUD_ENABLED
 	select MQTT_LIB
 	select MQTT_LIB_TLS
+	select FOTA_DOWNLOAD
+	select DOWNLOAD_CLIENT
+	select REBOOT
 	bool "Enable Pyrinas MQTT Cloud"
 	help
 		This option enables Pyrinas Cloud functions.
