@@ -9,7 +9,6 @@
 #include <random/rand32.h>
 #include <net/mqtt.h>
 #include <net/socket.h>
-#include <modem/at_cmd.h>
 #include <net/fota_download.h>
 #include <assert.h>
 
@@ -35,10 +34,6 @@ K_MSGQ_DEFINE(m_tx_queue, sizeof(struct pyrinas_cloud_evt), 24, 4);
 /* Buffers for MQTT client. */
 static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
 static uint8_t tx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
-
-/* IMEI storage */
-#define CGSN_RESP_LEN 19
-char imei[IMEI_LEN];
 
 /* Topics */
 char ota_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC) + IMEI_LEN];
@@ -121,7 +116,7 @@ int pyrinas_cloud_subscribe(char *topic, pyrinas_cloud_application_cb_t callback
             callbacks[i] = k_malloc(sizeof(pryinas_cloud_application_cb_entry_t));
 
             /* Set the full name */
-            snprintf(callbacks[i]->full_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, IMEI_LEN, imei, topic_len, topic);
+            snprintf(callbacks[i]->full_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, m_config.client_id.len, m_config.client_id.str, topic_len, topic);
 
             LOG_DBG("application subscribe to: %s", callbacks[i]->full_topic);
 
@@ -158,30 +153,6 @@ int pyrinas_cloud_unsubscribe(char *topic)
 
     /* Entry not found */
     return -ENOENT;
-}
-
-/**@brief Function to get IMEI
- */
-static int get_imei(char *imei_buf, size_t len)
-{
-    enum at_cmd_state at_state;
-
-    char buf[CGSN_RESP_LEN];
-
-    /* Fetch the IMEI using at cmd */
-    int err = at_cmd_write("AT+CGSN", buf, CGSN_RESP_LEN,
-                           &at_state);
-    if (err)
-    {
-        printk("Error when trying to do at_cmd_write: %d, at_state: %d",
-               err, at_state);
-        return err;
-    }
-
-    /* Copy data to imei buf */
-    memcpy(imei_buf, buf, len);
-
-    return 0;
 }
 
 /**@brief Function to publish data on the configured topic
@@ -1017,31 +988,22 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     /*Set the callback*/
     m_config = *p_config;
 
-    /* Get the IMEI */
-    get_imei(imei, sizeof(imei));
-
-    /* Print the IMEI */
-    LOG_DBG("IMEI: %s", imei);
-
 /* Init FOTA client */
 #ifdef CONFIG_FOTA_DOWNLOAD
     fota_download_init(fota_evt);
 #endif
 
     /* Set up topics */
-    snprintf(ota_pub_topic, sizeof(ota_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC, IMEI_LEN, imei);
-    snprintf(ota_sub_topic, sizeof(ota_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC, IMEI_LEN, imei);
-    snprintf(telemetry_pub_topic, sizeof(telemetry_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC, IMEI_LEN, imei);
-    snprintf(application_sub_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, IMEI_LEN, imei, 1, "+");
+    snprintf(ota_pub_topic, sizeof(ota_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC, p_config->client_id.len, p_config->client_id.str);
+    snprintf(ota_sub_topic, sizeof(ota_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC, p_config->client_id.len, p_config->client_id.str);
+    snprintf(telemetry_pub_topic, sizeof(telemetry_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC, p_config->client_id.len, p_config->client_id.str);
+    snprintf(application_sub_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, p_config->client_id.len, p_config->client_id.str, 1, "+");
 
     /* Initialize workers */
     work_init();
 
-    /* Get the IMEI */
-    get_imei(imei, sizeof(imei));
-
     /* MQTT client create */
-    err = client_init(&client, imei, sizeof(imei));
+    err = client_init(&client, p_config->client_id.str, p_config->client_id.len);
     if (err != 0)
     {
         LOG_ERR("client_init %d", err);
@@ -1213,7 +1175,7 @@ int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
     /* Create topic */
     err = snprintf(message.topic, CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE,
                    CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC,
-                   sizeof(imei), imei,
+                   m_config.client_id.len, m_config.client_id.str,
                    strlen(type), type);
 
     if (err < 0)

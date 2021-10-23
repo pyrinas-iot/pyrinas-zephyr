@@ -158,10 +158,18 @@ typedef struct
   size_t topic_len;
 } pryinas_cloud_application_cb_entry_t;
 
+/* Saving variable length client ID*/
+struct pryinas_cloud_client_id
+{
+  char *str;
+  size_t len;
+};
+
 /* Pyrinas Cloud Config */
 struct pyrinas_cloud_config
 {
   pyrinas_cloud_evt_cb_t evt_cb;
+  struct pryinas_cloud_client_id client_id;
 };
 
 /* Init MQTT Client */
