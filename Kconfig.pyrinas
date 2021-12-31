@@ -6,7 +6,16 @@
 
 menu "Pyrinas"
 
+config PYRINAS
+	bool "Enable Pyrinas"
+	help
+		This option enables Pyrinas functions.
+
+if PYRINAS
+
 rsource "lib/Kconfig"
 rsource "subsys/Kconfig"
+
+endif
 
 endmenu
