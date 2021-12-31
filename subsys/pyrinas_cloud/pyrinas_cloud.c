@@ -326,7 +326,7 @@ static void on_connect_fn(struct k_work *unused)
     };
 
     /* Get version string */
-    get_version_string(data.version, sizeof(data.version));
+    strncpy(data.version, CONFIG_PYRINAS_APP_VERSION, sizeof(data.version));
 
     /* Publish telemetry */
     int err = pyrinas_cloud_publish_telemetry(&data);
@@ -458,9 +458,7 @@ static void rx_event_work_fn(struct k_work *unused)
             /* Parse OTA event */
             int err = decode_ota_package(&ota_package, message.data.msg.data, message.data.msg.data_len);
 
-            uint8_t ver[64];
-            get_version_string(ver, sizeof(ver));
-            LOG_INF("Current Version: %s", log_strdup(ver));
+            LOG_INF("Current Version: %s", log_strdup(CONFIG_PYRINAS_APP_VERSION));
 
             /* If error then no update available */
             if (err == 0)
@@ -1018,6 +1016,8 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 
         return err;
     }
+
+    return 0;
 }
 
 int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)

@@ -11,6 +11,4 @@
 
 extern const union pyrinas_cloud_ota_version pyrinas_version;
 
-int get_version_string(uint8_t *p_buf, const size_t size);
-
 #endif /*PYRINAS_CLOUD_VERSION_H*/
