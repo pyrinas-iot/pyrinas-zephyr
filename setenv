@@ -1,1 +1,0 @@
-export PATH=/opt/nordic/ncs/v1.5.0/toolchain/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin ; export ZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb ; export GNUARMEMB_TOOLCHAIN_PATH=/opt/nordic/ncs/v1.5.0/toolchain ; clear
