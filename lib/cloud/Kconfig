@@ -11,6 +11,9 @@ config PYRINAS_CLOUD_ENABLED
 	select MQTT_LIB_TLS
 	select FOTA_DOWNLOAD
 	select DOWNLOAD_CLIENT
+	select IMG_MANAGER
+	select IMG_ERASE_PROGRESSIVELY
+	select DFU_TARGET
 	select REBOOT
 	bool "Enable Pyrinas MQTT Cloud"
 	help
