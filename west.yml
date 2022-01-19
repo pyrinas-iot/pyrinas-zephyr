@@ -5,10 +5,6 @@ manifest:
       url: https://github.com/jaredwolff/QCBOR.git
       revision: dev
       path: modules/lib/qcbor
-    - name: pyrinas-codec
-      url: https://github.com/pyrinas-iot/pyrinas-codec.git
-      revision: master
-      path: modules/lib/pyrinas/ext/pyrinas-codec
   self:
     path: modules/lib/pyrinas
 

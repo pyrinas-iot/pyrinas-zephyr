@@ -1,0 +1,51 @@
+#
+# Copyright (c) 2020 Circuit Dojo LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+menu "Pyrinas Library"
+
+config PYRINAS_BLUETOOTH_ENABLED
+	bool "Enable Pyrinas Bluetooth LR Hub"
+	help
+		This option enables Pyrinas overall.
+
+config APP_WIPE_STORAGE
+	bool "Option to clear the flash area before mounting"
+	help
+	  Use this to force an existing file system to be created.
+
+if PYRINAS_BLUETOOTH_ENABLED
+
+config PYRINAS_BLUETOOTH_WORKQUEUE_STACK_SIZE
+	int "Bluetooth workqueue stack size"
+	default 4096
+
+config PYRINAS_BLUETOOTH_WORKQUEUE_PRIORITY
+	int "Bluetooth workqueue priority"
+	default SYSTEM_WORKQUEUE_PRIORITY
+
+choice
+	prompt "Bluetooth Mode"
+	default PYRINAS_PERIPH_ENABLED
+	help
+		Select from which Pyrinas mode to use. Central or Peripheral.
+
+config PYRINAS_CENTRAL_ENABLED
+	bool "Use Pyrinas in Central Mode"
+  select BT_GATT_NUS_C
+	help
+		Use Pyrinas in Central Mode.
+
+config PYRINAS_PERIPH_ENABLED
+	bool "Use Pyrinas in Peripheral Mode"
+  select BT_GATT_NUS
+	help
+		Use Pyrinas in as a Peripheral Client
+
+endchoice
+
+endif
+
+endmenu

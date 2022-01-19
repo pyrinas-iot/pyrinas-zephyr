@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2020 Circuit Dojo
+# Copyright (c) 2022 Circuit Dojo
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -11,6 +11,4 @@ if (CONFIG_PYRINAS)
 zephyr_include_directories(include)
 
 add_subdirectory(lib)
-add_subdirectory(ext)
-add_subdirectory(subsys)
 endif()

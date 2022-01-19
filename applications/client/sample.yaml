@@ -1,9 +1,0 @@
-sample:
-  name: nRF9160 Feather Test
-  description: Testing all functionality internally to the nRF9160 Feather Board.
-  platforms: all
-tests:
-  - test:
-      build_only: true
-      tags: samples tests
-      min_ram: 16

@@ -1,1 +1,0 @@
-zephyr_library_sources(cellular.c)

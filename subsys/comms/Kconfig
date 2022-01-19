@@ -1,8 +1,0 @@
-menu "Pyrinas Bi-Directional UART Comms"
-
-config PYRINAS_BIDI_COMMS
-	bool "Enable Pyrinas Bidirectional UART Comms"
-	help
-		This option enables Pyrinas Bi-directional comms functions.
-
-endmenu

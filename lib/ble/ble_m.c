@@ -24,10 +24,6 @@ LOG_MODULE_REGISTER(ble_m);
 
 #define member_size(type, member) sizeof(((type *)0)->member)
 
-// Queue definition
-K_MSGQ_DEFINE(m_event_rx_queue, sizeof(pyrinas_event_t), 24, BLE_QUEUE_ALIGN);
-K_MSGQ_DEFINE(m_event_tx_queue, sizeof(pyrinas_event_t), 24, BLE_QUEUE_ALIGN);
-
 static ble_subscription_list_t m_subscribe_list; /**< Use for adding/removing subscriptions */
 static ble_stack_init_t m_config;                /**< Init config */
 static raw_susbcribe_handler_t m_raw_handler_ext;
@@ -38,91 +34,7 @@ K_THREAD_STACK_DEFINE(ble_stack_area,
                       CONFIG_PYRINAS_BLUETOOTH_WORKQUEUE_STACK_SIZE);
 static struct k_work_q ble_work_q;
 
-/* Related work handler for rx ring buf*/
-static struct k_work bt_rx_work, bt_tx_work;
-static struct k_work bt_ready_work;
-static struct k_work bt_erase_bonds_work;
-static void bt_rx_work_handler(struct k_work *work);
-static void bt_tx_work_handler(struct k_work *work);
-static void bt_send_ready_work_handler(struct k_work *work);
-static void bt_erase_bonds_work_handler(struct k_work *work);
-
 static int subscriber_search(pyrinas_event_name_data_t *event_name); /* Forward declaration of subscriber_search */
-
-/* Temporary evt */
-static pyrinas_event_t rx_evt, tx_evt;
-
-static void bt_erase_bonds_work_handler(struct k_work *work)
-{
-    LOG_INF("Erasing bonds..");
-
-    int err = bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
-    if (err)
-    {
-        LOG_ERR("bt_unpair: %d", err);
-    }
-}
-
-static void bt_tx_work_handler(struct k_work *work)
-{
-    while (k_msgq_num_used_get(&m_event_tx_queue))
-    {
-
-        // Get it from the queue
-        int err = k_msgq_get(&m_event_tx_queue, &tx_evt, K_NO_WAIT);
-        if (err == 0)
-        {
-
-            uint8_t buf[pyrinas_event_t_size];
-
-            size_t size = 0;
-
-            /* Encode into something useful */
-            int err = pyrinas_codec_encode(&tx_evt, buf, pyrinas_event_t_size, &size);
-            if (err)
-            {
-                LOG_ERR("Unable to encode pyrinas message");
-                return;
-            }
-
-// TODO: send to connected device(s)
-#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
-            ble_peripheral_write(buf, size);
-#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
-            ble_central_write(buf, size);
-#endif
-        }
-    }
-}
-
-static void bt_rx_work_handler(struct k_work *work)
-{
-
-    while (k_msgq_num_used_get(&m_event_rx_queue))
-    {
-
-        // Get it from the queue
-        int err = k_msgq_get(&m_event_rx_queue, &rx_evt, K_NO_WAIT);
-        if (err == 0)
-        {
-            // Forward to raw handler if it exists
-            if (m_raw_handler_ext != NULL)
-            {
-                m_raw_handler_ext(&rx_evt);
-            }
-
-            // Check if exists
-            int index = subscriber_search(&rx_evt.name);
-
-            // If index is >= 0, we have an entry
-            if (index != -1)
-            {
-                // Push to susbscription context
-                m_subscribe_list.subscribers[index].evt_handler((char *)rx_evt.name.bytes, (char *)rx_evt.data.bytes);
-            }
-        }
-    }
-}
 
 bool ble_is_connected(void)
 {
@@ -151,7 +63,6 @@ void ble_disconnect(void)
 void ble_publish(char *name, char *data)
 {
 
-    int err;
     uint8_t name_length = strlen(name) + 1;
     uint8_t data_length = strlen(data) + 1;
 
@@ -179,33 +90,33 @@ void ble_publish(char *name, char *data)
     memcpy(event.name.bytes, name, name_length);
     memcpy(event.data.bytes, data, data_length);
 
-    err = k_msgq_put(&m_event_tx_queue, &event, K_NO_WAIT);
-    if (err)
-    {
-        LOG_ERR("Unable to add tx event from device to queue!");
-    }
-
-    // Start work if it hasn't been already
-    k_work_submit_to_queue(&ble_work_q, &bt_tx_work);
+    ble_publish_raw(&event);
 }
 
-void ble_publish_raw(pyrinas_event_t event)
+void ble_publish_raw(pyrinas_event_t *event)
 {
-
-    // LOG_INF("publish raw: %s %s %d", log_strdup(event.name.bytes), log_strdup(event.data.bytes), m_config.mode);
 
     // TODO: Get address of this device
     // Copy over the address information
     // memcpy(event.faddr, gap_addr.addr, sizeof(event.faddr));
 
-    int err = k_msgq_put(&m_event_tx_queue, &event, K_NO_WAIT);
+    uint8_t buf[pyrinas_event_t_size];
+    size_t size = 0;
+
+    /* Encode into something useful */
+    int err = pyrinas_codec_encode(event, buf, pyrinas_event_t_size, &size);
     if (err)
     {
-        LOG_ERR("Unable to add tx event from device to queue!");
+        LOG_ERR("Unable to encode pyrinas message. Error: %i", err);
+        return;
     }
 
-    // Start work if it hasn't been already
-    k_work_submit_to_queue(&ble_work_q, &bt_tx_work);
+// TODO: send to connected device(s)
+#if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+    ble_peripheral_write(buf, size);
+#elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    ble_central_write(buf, size);
+#endif
 }
 
 void ble_subscribe(char *name, susbcribe_handler_t handler)
@@ -286,46 +197,26 @@ static void ble_evt_handler(const char *data, uint16_t len)
         // LOG_DBG("evt: \"%s\"", log_strdup(evt.name.bytes));
         // LOG_INF("%d %d", sizeof(pyrinas_event_t), BLE_INCOMING_PROTOBUF_SIZE);
 
-        // Queue events
-        err = k_msgq_put(&m_event_rx_queue, &incoming, K_NO_WAIT);
-        if (err)
+        // Forward to raw handler if it exists
+        if (m_raw_handler_ext != NULL)
         {
-            LOG_ERR("Unable to add event from device to queue!");
+            m_raw_handler_ext(&incoming);
         }
 
-        // Start work if it hasn't been already
-        k_work_submit_to_queue(&ble_work_q, &bt_rx_work);
+        // Check if exists
+        int index = subscriber_search(&incoming.name);
+
+        // If index is >= 0, we have an entry
+        if (index != -1)
+        {
+            // Push to susbscription context
+            m_subscribe_list.subscribers[index].evt_handler((char *)incoming.name.bytes, (char *)incoming.data.bytes);
+        }
     }
     else
     {
         LOG_WRN("Invalid data received!");
     }
-}
-
-static void bt_send_ready_work_handler(struct k_work *work)
-{
-
-    // Load settings..
-    if (IS_ENABLED(CONFIG_BT_SETTINGS))
-    {
-        // Get the settings..
-        int ret = settings_load();
-        if (ret)
-        {
-            LOG_ERR("Unable to load settings.");
-            return;
-        }
-    }
-
-    // Init complete
-    m_init_complete = true;
-
-// Call the ready functions for peripheral and central
-#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
-    ble_central_ready();
-#elif defined(CONFIG_PYRINAS_PERIPH_ENABLED)
-    ble_peripheral_ready();
-#endif
 }
 
 static void ble_ready(int err)
@@ -338,8 +229,27 @@ static void ble_ready(int err)
     }
     else
     {
-        LOG_INF("BLE Stack Ready!");
-        k_work_submit_to_queue(&ble_work_q, &bt_ready_work);
+        // Load settings..
+        if (IS_ENABLED(CONFIG_BT_SETTINGS))
+        {
+            // Get the settings..
+            int ret = settings_load();
+            if (ret)
+            {
+                LOG_ERR("Unable to load settings.");
+                return;
+            }
+        }
+
+        // Init complete
+        m_init_complete = true;
+
+// Call the ready functions for peripheral and central
+#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+        ble_central_ready();
+#elif defined(CONFIG_PYRINAS_PERIPH_ENABLED)
+        ble_peripheral_ready();
+#endif
     }
 }
 
@@ -354,17 +264,11 @@ void ble_stack_init(ble_stack_init_t *p_init)
         __ASSERT(p_init, "Error: Invalid param.\n");
     }
 
-    LOG_INF("Buffer item size: %d", BLE_QUEUE_ITEM_SIZE);
+    LOG_DBG("Buffer item size: %d", BLE_QUEUE_ITEM_SIZE);
 
-    k_work_q_start(&ble_work_q, ble_stack_area,
-                   K_THREAD_STACK_SIZEOF(ble_stack_area),
-                   CONFIG_PYRINAS_BLUETOOTH_WORKQUEUE_PRIORITY);
-
-    /* Init work */
-    k_work_init(&bt_rx_work, bt_rx_work_handler);
-    k_work_init(&bt_tx_work, bt_tx_work_handler);
-    k_work_init(&bt_ready_work, bt_send_ready_work_handler);
-    k_work_init(&bt_erase_bonds_work, bt_erase_bonds_work_handler);
+    k_work_queue_start(&ble_work_q, ble_stack_area,
+                       K_THREAD_STACK_SIZEOF(ble_stack_area),
+                       CONFIG_PYRINAS_BLUETOOTH_WORKQUEUE_PRIORITY, NULL);
 
     // Copy over configuration
     memcpy(&m_config, p_init, sizeof(m_config));
@@ -421,5 +325,11 @@ static int subscriber_search(pyrinas_event_name_data_t *event_name)
 /* Deleting devices from Whitelist */
 void ble_erase_bonds(void)
 {
-    k_work_submit_to_queue(&ble_work_q, &bt_erase_bonds_work);
+    LOG_INF("Erasing bonds..");
+
+    int err = bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
+    if (err)
+    {
+        LOG_ERR("bt_unpair: %d", err);
+    }
 }
