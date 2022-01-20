@@ -429,8 +429,6 @@ static void publish_sort(struct pyrinas_cloud_evt *message)
         /* Parse OTA event */
         int err = decode_ota_package(&ota_package, message->data.msg.data, message->data.msg.data_len);
 
-        LOG_INF("ota: Current Version: %s", log_strdup(CONFIG_PYRINAS_APP_VERSION));
-
         /* If error then no update available */
         if (err == 0)
         {
@@ -440,6 +438,7 @@ static void publish_sort(struct pyrinas_cloud_evt *message)
 
             /* Print result */
             LOG_INF("ota: New version? %s ", result == 1 ? "true" : "false");
+            LOG_INF("ota: Remote version: %i.%i.%i-%i ", ota_package.version.major, ota_package.version.minor, ota_package.version.patch, ota_package.version.commit);
         }
         else
         {
