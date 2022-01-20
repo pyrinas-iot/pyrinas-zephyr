@@ -90,7 +90,7 @@ static void bt_send_work_handler(struct k_work *work)
         /* Check if busy */
         if (bt_pyrinas_client_is_busy(&m_conns[i].pyrinas_client))
         {
-            LOG_DBG("Failed to send. Pyrinas Client busy.");
+            LOG_WRN("Failed to send. Pyrinas Client %i busy.", i);
             schedule_work = true;
             break;
         }
@@ -102,6 +102,8 @@ static void bt_send_work_handler(struct k_work *work)
             LOG_WRN("%d Unable to get data from queue", i);
             continue;
         }
+
+        LOG_DBG("Sending from %i", i);
 
         // Send the data
         // ! This call is asyncronous. Need to call semaphore and then release once data is sent.
@@ -211,6 +213,7 @@ static int ble_central_scan_set_filters(void)
     /* Loop through all potential device IDs  and add those filters */
     for (int i = 0; i < m_config.device_count; i++)
     {
+        LOG_HEXDUMP_INF(m_config.addr[i].a.val, 6, "Setting filter for:");
 
         err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_ADDR, &m_config.addr[i]);
         if (err)
@@ -329,7 +332,6 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     // If not valid connection return
     if (!ready)
     {
-        LOG_WRN("Invalid connection(s).");
         return;
     }
 
@@ -351,7 +353,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
         // Queue if ready
         if (m_conns[i].conn != NULL)
         {
-            LOG_DBG("Queing to connection %d", i);
+            LOG_DBG("Queing to connection %d with %i", i, k_msgq_num_used_get(&m_conns[i].q));
 
             // Add struct to queue
             int err = k_msgq_put(&m_conns[i].q, &evt, K_NO_WAIT);
@@ -378,58 +380,52 @@ static void force_disconnect(struct bt_conn *conn)
 
 static void discovery_completed(struct bt_gatt_dm *dm, void *context)
 {
-    struct bt_pyrinas_client *pyrinas_client = context;
 
     LOG_INF("Discovery complete!");
 
     int err;
 
-    err = bt_pyrinas_handles_assign(dm, pyrinas_client);
-    if (err)
-    {
-        LOG_ERR("Unable to assign handles (err %d)", err);
-
-        // Disconnect from device on error
-        force_disconnect(bt_gatt_dm_conn_get(dm));
-
-        goto finish;
-    }
-
-    err = bt_pyrinas_subscribe_receive(pyrinas_client);
-    if (err)
-    {
-        LOG_ERR("Unable to enable notifications (err %d)", err);
-
-        // Disconnect from device on error
-        force_disconnect(bt_gatt_dm_conn_get(dm));
-
-        goto finish;
-    }
-
-    struct ble_c_connection *dev_conn;
-    bool found = false;
-
     // Check if the conns are equal then set pyrinas_client
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
-        // Copy the context address over
-        if (m_conns[i].conn == pyrinas_client->conn)
+        /* Compare address to make sure we're assigning the right one */
+        if (m_conns[i].conn == bt_gatt_dm_conn_get(dm))
         {
-            // This is used to start sec
-            dev_conn = &m_conns[i];
 
-            // Copy the context
-            m_conns[i].pyrinas_client = *pyrinas_client;
+            /*Set handles*/
+            err = bt_pyrinas_handles_assign(dm, &m_conns[i].pyrinas_client);
+            if (err)
+            {
+                LOG_ERR("Unable to assign handles (err %d)", err);
 
-            // We've found it!
-            found = true;
+                /* Disconnect from device on error */
+                force_disconnect(bt_gatt_dm_conn_get(dm));
 
-            // Set to ready
-            atomic_inc(&m_num_connected);
+                goto finish;
+            }
+
+            err = bt_pyrinas_subscribe_receive(&m_conns[i].pyrinas_client);
+            if (err)
+            {
+                LOG_ERR("Unable to enable notifications (err %d)", err);
+
+                // Disconnect from device on error
+                force_disconnect(bt_gatt_dm_conn_get(dm));
+
+                goto finish;
+            }
+
+            // Reset pyrinas_client
+            bt_pyrinas_client_reset(&m_conns[i].pyrinas_client);
 
             break;
         }
     }
+
+    LOG_DBG("Number of clients connected %i", atomic_get(&m_num_connected));
+
+    // Set to ready
+    atomic_inc(&m_num_connected);
 
 finish:
 
@@ -504,11 +500,15 @@ static void gatt_discover(struct bt_conn *conn)
 void ble_central_scan_start()
 {
 
-    LOG_INF("Scan start!");
-
     /* Force disconnect*/
     if (atomic_get(&m_force_disconnect) == 1)
         return;
+
+    /* Only scans if we have devices */
+    if (m_config.device_count == 0)
+        return;
+
+    LOG_INF("Scan start!");
 
     int err = bt_scan_start(BT_LE_SCAN_TYPE_PASSIVE);
     if (err == -EALREADY)
@@ -555,7 +555,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
         k_msgq_purge(&m_conns[i].q);
 
         // Reset ready flag
-        atomic_dec(&m_num_connected);
+        if (atomic_get(&m_num_connected))
+        {
+            atomic_dec(&m_num_connected);
+        }
 
         // Set this flag to start adv at the end
         advertise = true;
@@ -771,9 +774,12 @@ void ble_central_set_whitelist(ble_central_config_t *config)
     }
 
     /* Disconnect from all */
-    for (int i = 0; i < atomic_get(&m_num_connected); i++)
+    for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
-        force_disconnect(m_conns[i].conn);
+        if (m_conns[i].conn != NULL)
+        {
+            force_disconnect(m_conns[i].conn);
+        }
     }
 
     /*Set devices by copying*/
@@ -783,15 +789,23 @@ void ble_central_set_whitelist(ble_central_config_t *config)
 
     atomic_set(&m_force_disconnect, 0);
 
-    /* Initialize scanning filters */
-    err = ble_central_scan_set_filters();
-    if (err)
-    {
-        LOG_ERR("Unable to set scan filters!");
-    }
-
     /* Start scan with new filters.. */
-    ble_central_scan_start();
+    if (m_config.device_count > 0)
+    {
+
+        /* Initialize scanning filters */
+        err = ble_central_scan_set_filters();
+        if (err)
+        {
+            LOG_ERR("Unable to set scan filters!");
+        }
+
+        ble_central_scan_start();
+    }
+    else
+    {
+        bt_scan_filter_remove_all();
+    }
 }
 
 #endif

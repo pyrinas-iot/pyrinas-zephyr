@@ -21,9 +21,6 @@ enum
     PYRINAS_C_WRITE_PENDING
 };
 
-/** State for allowing only one write at a time.. */
-static atomic_t m_state;
-
 static uint8_t on_received(struct bt_conn *conn,
                            struct bt_gatt_subscribe_params *params,
                            const void *data, uint16_t length)
@@ -56,8 +53,10 @@ static uint8_t on_received(struct bt_conn *conn,
 
 static void on_sent(struct bt_conn *conn, void *user_data)
 {
+    struct bt_pyrinas_client *pyrinas_c = user_data;
+
     /* Clear the state */
-    atomic_clear_bit(&m_state, PYRINAS_C_WRITE_PENDING);
+    atomic_clear_bit(&pyrinas_c->state, PYRINAS_C_WRITE_PENDING);
 }
 
 int bt_pyrinas_client_init(struct bt_pyrinas_client *pyrinas_c,
@@ -80,7 +79,7 @@ int bt_pyrinas_client_init(struct bt_pyrinas_client *pyrinas_c,
 
 bool bt_pyrinas_client_is_busy(struct bt_pyrinas_client *pyrinas_c)
 {
-    return atomic_test_bit(&m_state, PYRINAS_C_WRITE_PENDING);
+    return atomic_test_bit(&pyrinas_c->state, PYRINAS_C_WRITE_PENDING);
 }
 
 int bt_pyrinas_client_send(struct bt_pyrinas_client *pyrinas_c, const uint8_t *data,
@@ -93,7 +92,7 @@ int bt_pyrinas_client_send(struct bt_pyrinas_client *pyrinas_c, const uint8_t *d
         return -ENOTCONN;
     }
 
-    if (atomic_test_and_set_bit(&m_state, PYRINAS_C_WRITE_PENDING))
+    if (atomic_test_and_set_bit(&pyrinas_c->state, PYRINAS_C_WRITE_PENDING))
     {
         return -EALREADY;
     }
@@ -102,10 +101,10 @@ int bt_pyrinas_client_send(struct bt_pyrinas_client *pyrinas_c, const uint8_t *d
     err = bt_gatt_write_without_response_cb(pyrinas_c->conn,
                                             pyrinas_c->handles.data, data,
                                             len, false, on_sent,
-                                            NULL);
+                                            pyrinas_c);
     if (err)
     {
-        atomic_clear_bit(&m_state, PYRINAS_C_WRITE_PENDING);
+        atomic_clear_bit(&pyrinas_c->state, PYRINAS_C_WRITE_PENDING);
 
         LOG_ERR("Unable to write without rsp. Code: %i", err);
     }
@@ -189,4 +188,11 @@ int bt_pyrinas_subscribe_receive(struct bt_pyrinas_client *pyrinas_c)
     }
 
     return err;
+}
+
+void bt_pyrinas_client_reset(struct bt_pyrinas_client *pyrinas_c)
+{
+    /* Reset state */
+    atomic_clear_bit(&pyrinas_c->state, PYRINAS_C_WRITE_PENDING);
+    atomic_clear_bit(&pyrinas_c->state, PYRINAS_C_NOTIF_ENABLED);
 }
