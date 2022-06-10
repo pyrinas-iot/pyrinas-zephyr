@@ -381,7 +381,7 @@ static void fota_start_fn(struct k_work *unused)
     LOG_DBG("%s/%s using tag %d", ota_package.files[index].host, ota_package.files[index].file, sec_tag);
 
     /* Start download uses default port and APN*/
-    err = fota_download_start(ota_package.files[index].host, ota_package.files[index].file, sec_tag, NULL, 0);
+    err = fota_download_start(ota_package.files[index].host, ota_package.files[index].file, sec_tag, 0, 0);
     if (err)
     {
         LOG_ERR("fota_download_start error %d", err);

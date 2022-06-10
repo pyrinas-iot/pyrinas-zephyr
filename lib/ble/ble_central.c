@@ -422,7 +422,7 @@ static void discovery_completed(struct bt_gatt_dm *dm, void *context)
         }
     }
 
-    LOG_DBG("Number of clients connected %i", atomic_get(&m_num_connected));
+    LOG_DBG("Number of clients connected %i", (int)atomic_get(&m_num_connected));
 
     // Set to ready
     atomic_inc(&m_num_connected);
