@@ -50,6 +50,7 @@ static K_SEM_DEFINE(connection_poll_sem, 0, 1);
 static atomic_val_t cloud_state_s = ATOMIC_INIT(cloud_state_disconnected);
 static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
 static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
+static atomic_t connection_poll_active;
 
 /* File descriptor */
 static struct pollfd fds;
@@ -863,28 +864,12 @@ static void fota_evt(const struct fota_download_evt *p_evt)
 int pyrinas_cloud_connect()
 {
 
-    int err;
-
-    /* Connect to MQTT */
-    err = mqtt_connect(&client);
-    if (err != 0)
+    /* Check if thread is already active. */
+    if (atomic_get(&connection_poll_active))
     {
-        LOG_ERR("mqtt_connect %d", err);
-
-        /* Send to calback */
-        if (m_config.evt_cb)
-        {
-            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
-                                            .data.err = err};
-            m_config.evt_cb(&evt);
-        }
-
-        return err;
+        LOG_WRN("Connection poll in progress");
+        return -EINPROGRESS;
     }
-
-    /* Set FDS info */
-    fds.fd = client.transport.tls.sock;
-    fds.events = POLLIN;
 
     /* Start the thread (if not already)*/
     k_sem_give(&connection_poll_sem);
@@ -1093,6 +1078,43 @@ void pyrinas_cloud_poll(void)
 
 start:
     k_sem_take(&connection_poll_sem, K_FOREVER);
+    atomic_set(&connection_poll_active, 1);
+
+    /* Connect to MQTT */
+    err = mqtt_connect(&client);
+    if (err != 0)
+    {
+        LOG_ERR("mqtt_connect %d", err);
+
+        /* Send to calback */
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR};
+            m_config.evt_cb(&evt);
+        }
+
+        goto reset;
+    }
+
+    struct timeval timeout = {
+        .tv_sec = 60};
+
+    /* Set FDS info */
+    fds.fd = client.transport.tcp.sock;
+    fds.events = POLLIN;
+
+    /* Set timeout for sening data */
+    err = setsockopt(fds.fd, SOL_SOCKET, SO_SNDTIMEO,
+                     &timeout, sizeof(timeout));
+    if (err == -1)
+    {
+        LOG_ERR("Failed to set timeout, errno: %d", errno);
+    }
+    else
+    {
+        LOG_INF("Using socket send timeout of %d seconds",
+                (uint32_t)timeout.tv_sec);
+    }
 
     while (true)
     {
@@ -1103,18 +1125,20 @@ start:
         /* If poll returns 0 the timeout has expired. */
         if (err == 0)
         {
-            pyrinas_cloud_process();
+            mqtt_input(&client);
+            mqtt_live(&client);
             continue;
         }
 
         if ((fds.revents & POLLIN) == POLLIN)
         {
-            pyrinas_cloud_process();
+            mqtt_input(&client);
+            mqtt_live(&client);
 
             /* Check if socket is closed */
             if (atomic_get(&cloud_state_s) == cloud_state_disconnected)
             {
-                LOG_WRN("Socket already closed!");
+                LOG_DBG("Socket already closed!");
                 break;
             }
 
@@ -1129,31 +1153,42 @@ start:
 
         if ((fds.revents & POLLERR) == POLLERR)
         {
-            LOG_ERR("POLLERR");
+            LOG_WRN("POLLERR");
             break;
         }
 
         if ((fds.revents & POLLHUP) == POLLHUP)
         {
-            LOG_ERR("POLLHUP");
+            LOG_WRN("POLLHUP");
             break;
         }
 
         if ((fds.revents & POLLNVAL) == POLLNVAL)
         {
-            LOG_ERR("POLLNVAL");
+            LOG_WRN("POLLNVAL");
             break;
         }
     }
 
-    k_sem_reset(&connection_poll_sem);
-    goto start;
-}
+reset:
 
-void pyrinas_cloud_process()
-{
-    mqtt_input(&client);
-    mqtt_live(&client);
+    /* Push event */
+    if (atomic_get(&cloud_state_s) != cloud_state_disconnected)
+    {
+        atomic_set(&cloud_state_s, cloud_state_disconnected);
+
+        /* Send to calback */
+        if (m_config.evt_cb)
+        {
+            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_DISCONNECTED};
+            m_config.evt_cb(&evt);
+        }
+    }
+
+    /* Reset thread */
+    atomic_set(&connection_poll_active, 0);
+    k_sem_take(&connection_poll_sem, K_NO_WAIT);
+    goto start;
 }
 
 #define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(4)
