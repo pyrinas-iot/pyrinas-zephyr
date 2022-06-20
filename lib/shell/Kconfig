@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2020 Circuit Dojo LLC
+# Copyright (c) 2022 Circuit Dojo LLC
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -19,4 +19,11 @@ config AT_SHELL_CMD_RESPONSE_MAX_LEN
 	int "Maximum AT command response length"
 	default 2700
 
-endif # AT_SHELL
+endif # PYRINAS_AT_SHELL
+
+menuconfig PYRINAS_SETTINGS_SHELL
+	bool "Settings Shell"
+	depends on SETTINGS
+	depends on SHELL
+	help
+	  Adds the ability to set settings via shell.

@@ -11,6 +11,7 @@
 #include <net/socket.h>
 #include <net/fota_download.h>
 #include <assert.h>
+#include <settings/settings.h>
 
 #include <pyrinas_cloud/pyrinas_cloud.h>
 #include <pyrinas_cloud/pyrinas_version.h>
@@ -85,15 +86,18 @@ struct mqtt_utf8 mqtt_user_name, mqtt_password;
 /* Track message id*/
 static uint16_t message_id = 1;
 
-#if defined(CONFIG_BSD_LIBRARY)
+/* Memory for username, password, port and hostname */
+static char m_username[128] = {0};
+static char m_password[128] = {0};
+static char m_port[8] = {0};
+static char m_hostname[128] = {0};
 
-/**@brief Recoverable BSD library error. */
-void bsd_recoverable_error_handler(uint32_t err)
-{
-    printk("bsdlib recoverable error: %u\n", (unsigned int)err);
-}
-
-#endif /* defined(CONFIG_BSD_LIBRARY) */
+/* Forward declaration */
+static int settings_read_callback(const char *key,
+                                  size_t len,
+                                  settings_read_cb read_cb,
+                                  void *cb_arg,
+                                  void *param);
 
 int pyrinas_cloud_subscribe(char *topic, pyrinas_cloud_application_cb_t callback)
 {
@@ -678,7 +682,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
 /**@brief Resolves the configured hostname and
  * initializes the MQTT broker structure
  */
-static int broker_init(void)
+static int broker_init(char *hostname, uint16_t port)
 {
     int err;
     struct addrinfo *result;
@@ -686,7 +690,7 @@ static int broker_init(void)
     struct addrinfo hints = {.ai_family = AF_INET,
                              .ai_socktype = SOCK_STREAM};
 
-    err = getaddrinfo(CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME, NULL, &hints, &result);
+    err = getaddrinfo(hostname, NULL, &hints, &result);
     if (err)
         return err;
 
@@ -707,7 +711,7 @@ static int broker_init(void)
                 ((struct sockaddr_in *)addr->ai_addr)
                     ->sin_addr.s_addr;
             broker4->sin_family = AF_INET;
-            broker4->sin_port = htons(CONFIG_PYRINAS_CLOUD_MQTT_BROKER_PORT);
+            broker4->sin_port = htons(port);
 
             inet_ntop(AF_INET, &broker4->sin_addr.s_addr, ipv4_addr,
                       sizeof(ipv4_addr));
@@ -758,16 +762,47 @@ static void work_init()
     k_work_init(&ota_done_work, ota_done_work_fn);
 }
 
+static int settings_read_callback(const char *key,
+                                  size_t len,
+                                  settings_read_cb read_cb,
+                                  void *cb_arg,
+                                  void *param)
+{
+
+    ssize_t num_read_bytes = 0;
+    struct pyrinas_cloud_settings_params *params = param;
+
+    /* Make sure this is false first */
+    params->found = false;
+
+    /* Process only the exact match and ignore descendants of the searched name */
+    if (settings_name_next(key, NULL) != 0)
+    {
+        return 0;
+    }
+
+    /* Mark found */
+    params->found = true;
+
+    /* Get num bytes to read*/
+    num_read_bytes = MIN(len, params->len);
+
+    /* Read! */
+    num_read_bytes = read_cb(cb_arg, params->buf, num_read_bytes);
+
+    return 0;
+}
+
 /**@brief Initialize the MQTT client structure
  */
-static int client_init(struct mqtt_client *client, char *p_client_id, size_t client_id_sz)
+static int client_init(struct pyrinas_cloud_client_init *init, struct mqtt_client *client, char *p_client_id, size_t client_id_sz)
 {
 
     int err;
 
     mqtt_client_init(client);
 
-    err = broker_init();
+    err = broker_init(init->hostname, init->port);
     if (err != 0)
         return err;
 
@@ -778,22 +813,28 @@ static int client_init(struct mqtt_client *client, char *p_client_id, size_t cli
     client->client_id.size = client_id_sz;
     client->protocol_version = MQTT_VERSION_3_1_1;
 
-/* MQTT user name and password */
-#ifdef CONFIG_PYRINAS_CLOUD_PASSWORD
-    mqtt_password.utf8 = CONFIG_PYRINAS_CLOUD_PASSWORD;
-    mqtt_password.size = strlen(CONFIG_PYRINAS_CLOUD_PASSWORD);
-    client->password = &mqtt_password;
-#else
-    client->password = NULL;
-#endif
+    /* MQTT user name and password */
+    if (init->password)
+    {
+        mqtt_password.utf8 = init->password;
+        mqtt_password.size = strlen(init->password);
+        client->password = &mqtt_password;
+    }
+    else
+    {
+        client->password = NULL;
+    }
 
-#ifdef CONFIG_PYRINAS_CLOUD_USER_NAME
-    mqtt_user_name.utf8 = CONFIG_PYRINAS_CLOUD_USER_NAME;
-    mqtt_user_name.size = strlen(CONFIG_PYRINAS_CLOUD_USER_NAME);
-    client->user_name = &mqtt_user_name;
-#else
-    client->user_name = NULL;
-#endif
+    if (init->username)
+    {
+        mqtt_user_name.utf8 = init->username;
+        mqtt_user_name.size = strlen(init->username);
+        client->user_name = &mqtt_user_name;
+    }
+    else
+    {
+        client->user_name = NULL;
+    }
 
     /* MQTT buffers configuration */
     client->rx_buf = rx_buffer;
@@ -810,7 +851,7 @@ static int client_init(struct mqtt_client *client, char *p_client_id, size_t cli
     tls_config->cipher_list = NULL;
     tls_config->sec_tag_count = ARRAY_SIZE(sec_tag_list);
     tls_config->sec_tag_list = sec_tag_list;
-    tls_config->hostname = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME;
+    tls_config->hostname = init->hostname;
     tls_config->session_cache = TLS_SESSION_CACHE_DISABLED;
 
     return 0;
@@ -900,8 +941,107 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 {
     int err;
 
+    /* TODO: Determine values of all settings... */
+    struct pyrinas_cloud_client_init init = {0};
+
+#if CONFIG_SETTINGS
+    struct pyrinas_cloud_settings_params params = {0};
+
+    /* Load settings first */
+    err = settings_load();
+    if (err)
+    {
+        LOG_ERR("Unable to load settings. Err: %i", err);
+        return err;
+    }
+
+    /* Set buf */
+    params.len = sizeof(m_hostname);
+    params.buf = m_hostname;
+
+    err = settings_load_subtree_direct(PYRINAS_CLOUD_HOSTNAME, settings_read_callback, &params);
+    if (err < 0 || !params.found)
+    {
+        init.hostname = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME;
+    }
+    else
+    {
+        LOG_DBG("hostname %s", log_strdup(m_hostname));
+        init.hostname = m_hostname;
+    }
+
+    /* Set buf */
+    params.len = sizeof(m_port);
+    params.buf = m_port;
+
+    err = settings_load_subtree_direct(PYRINAS_CLOUD_PORT, settings_read_callback, &params);
+    if (err < 0 || !params.found)
+    {
+        init.port = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_PORT;
+    }
+    else
+    {
+        LOG_DBG("port %i", atoi(m_port));
+        init.port = atoi(m_port);
+    }
+
+    /* Set buf */
+    params.len = sizeof(m_username);
+    params.buf = m_username;
+
+    err = settings_load_subtree_direct(PYRINAS_CLOUD_USER, settings_read_callback, &params);
+    if (err < 0 || !params.found)
+    {
+#ifdef CONFIG_PYRINAS_CLOUD_USER_NAME
+        init.username = CONFIG_PYRINAS_CLOUD_USER_NAME;
+#else
+        init.username = NULL;
+#endif
+    }
+    else
+    {
+        LOG_DBG("user %i %s", strlen(m_username), log_strdup(m_username));
+        init.username = m_username;
+    }
+
+    /* Set buf */
+    params.len = sizeof(m_password);
+    params.buf = m_password;
+
+    err = settings_load_subtree_direct(PYRINAS_CLOUD_PASSWORD, settings_read_callback, &params);
+    if (err < 0 || !params.found)
+    {
+#ifdef CONFIG_PYRINAS_CLOUD_PASSWORD
+        init.password = CONFIG_PYRINAS_CLOUD_PASSWORD;
+#else
+        init.password = NULL;
+#endif
+    }
+    else
+    {
+        LOG_DBG("password %i %s", strlen(m_password), log_strdup(m_password));
+        init.password = m_password;
+    }
+
+#else
+#ifdef CONFIG_PYRINAS_CLOUD_USER_NAME
+    init.username = CONFIG_PYRINAS_CLOUD_USER_NAME;
+#else
+    init.username = NULL;
+#endif
+
+#ifdef CONFIG_PYRINAS_CLOUD_PASSWORD
+    init.password = CONFIG_PYRINAS_CLOUD_PASSWORD;
+#else
+    init.password = NULL;
+#endif
+
+    init.port = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_PORT;
+    init.hostname = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME;
+#endif
+
     /* For debug purposes */
-    LOG_INF("Connecting to: %s on port %d", CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME, CONFIG_PYRINAS_CLOUD_MQTT_BROKER_PORT);
+    LOG_INF("Connecting to: %s on port %d", log_strdup(init.hostname), init.port);
 
     /*Set the callback*/
     m_config = *p_config;
@@ -921,7 +1061,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     work_init();
 
     /* MQTT client create */
-    err = client_init(&client, p_config->client_id.str, p_config->client_id.len);
+    err = client_init(&init, &client, p_config->client_id.str, p_config->client_id.len);
     if (err != 0)
     {
         LOG_ERR("client_init %d", err);

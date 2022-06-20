@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-if (CONFIG_PYRINAS_AT_SHELL)
-add_subdirectory(at_shell)
+if (CONFIG_PYRINAS_AT_SHELL OR CONFIG_PYRINAS_SETTINGS_SHELL)
+add_subdirectory(shell)
 endif()
 
 if (CONFIG_PYRINAS_CLOUD_ENABLED)

@@ -229,18 +229,6 @@ static void ble_ready(int err)
     }
     else
     {
-        // Load settings..
-        if (IS_ENABLED(CONFIG_BT_SETTINGS))
-        {
-            // Get the settings..
-            int ret = settings_load();
-            if (ret)
-            {
-                LOG_ERR("Unable to load settings.");
-                return;
-            }
-        }
-
         // Init complete
         m_init_complete = true;
 
@@ -276,6 +264,14 @@ void ble_stack_init(ble_stack_init_t *p_init)
     LOG_INF("Initializing Bluetooth..");
     err = bt_enable(ble_ready);
     __ASSERT(err == 0, "Error: Bluetooth init failed (err %d)\n", err);
+
+    // Load settings..
+    if (IS_ENABLED(CONFIG_BT_SETTINGS))
+    {
+        // Get the settings..
+        err = settings_load();
+        __ASSERT(err == 0, "Error: Settings load in Bluetooth (err %d)\n", err);
+    }
 
 #if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
     // Attach handler

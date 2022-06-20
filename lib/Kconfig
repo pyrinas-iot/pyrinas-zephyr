@@ -6,7 +6,7 @@
 
 menu "Pyrinas Library"
 
-rsource "at_shell/Kconfig"
+rsource "shell/Kconfig"
 rsource "ble/Kconfig"
 rsource "cloud/Kconfig"
 

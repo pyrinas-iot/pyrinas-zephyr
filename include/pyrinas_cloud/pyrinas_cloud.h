@@ -16,6 +16,12 @@
 #define PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT 2
 #define PYRINAS_OTA_PACKAGE_MAX_FILE_PATH_CHARS 128
 
+/* Settings keys */
+#define PYRINAS_CLOUD_USER "pyrinas/username"
+#define PYRINAS_CLOUD_PASSWORD "pyrinas/password"
+#define PYRINAS_CLOUD_HOSTNAME "pyrinas/hostname"
+#define PYRINAS_CLOUD_PORT "pyrinas/port"
+
 /* Used to encode telemetry related keys */
 enum pyrinas_cloud_telemetry_type
 {
@@ -127,6 +133,13 @@ union pyrinas_cloud_ota_version
   uint8_t raw[12];
 };
 
+struct pyrinas_cloud_settings_params
+{
+  bool found;
+  char *buf;
+  size_t len;
+};
+
 enum pyrinas_cloud_ota_image_type
 {
   pyrinas_cloud_ota_image_type_primary = (1 << 0),
@@ -170,6 +183,15 @@ struct pyrinas_cloud_config
 {
   pyrinas_cloud_evt_cb_t evt_cb;
   struct pryinas_cloud_client_id client_id;
+};
+
+/* Client init info */
+struct pyrinas_cloud_client_init
+{
+  char *username;
+  char *password;
+  uint16_t port;
+  char *hostname;
 };
 
 /* Init MQTT Client */

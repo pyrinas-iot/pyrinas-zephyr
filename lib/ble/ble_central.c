@@ -8,7 +8,6 @@
 
 #include <zephyr.h>
 #include <sys/byteorder.h>
-#include <settings/settings.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
@@ -706,11 +705,6 @@ int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init
     {
         LOG_ERR("Failed to register authorization callbacks.");
         return err;
-    }
-
-    if (IS_ENABLED(CONFIG_SETTINGS))
-    {
-        settings_load();
     }
 
     // Set this count to 0
