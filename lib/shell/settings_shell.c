@@ -20,6 +20,7 @@ struct settings_read_callback_params
 	const struct shell *shell_ptr;
 	bool value_found;
 	bool json_output;
+	bool blank_out;
 };
 
 static int cmd_settings_set(const struct shell *shell, size_t argc, char *argv[])
@@ -123,7 +124,16 @@ static int settings_read_callback(const char *key,
 	}
 
 	params->value_found = true;
-	num_read_bytes = read_cb(cb_arg, buffer, num_read_bytes);
+
+	/* Don't read and blank out password */
+	if (params->blank_out)
+	{
+		memset(buffer, '*', num_read_bytes);
+	}
+	else
+	{
+		num_read_bytes = read_cb(cb_arg, buffer, num_read_bytes);
+	}
 
 	if (num_read_bytes < 0)
 	{
@@ -184,7 +194,14 @@ static int cmd_settings_get(const struct shell *shell, size_t argc,
 	struct settings_read_callback_params params = {
 		.shell_ptr = shell,
 		.value_found = false,
-		.json_output = json_output};
+		.json_output = json_output,
+		.blank_out = false};
+
+	/* Check if password */
+	if (strstr(name, "password"))
+	{
+		params.blank_out = true;
+	}
 
 	err = settings_load_subtree_direct(name, settings_read_callback, &params);
 
