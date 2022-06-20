@@ -235,6 +235,54 @@ static int cmd_settings_get(const struct shell *shell, size_t argc,
 	return 0;
 }
 
+static int cmd_settings_delete(const struct shell *shell, size_t argc,
+							   char *argv[])
+{
+
+	bool json_output;
+	int err;
+	const char *name = argv[1];
+
+	json_output = false;
+	if (argc >= 3)
+	{
+		if (strcmp(argv[2], "--json") == 0)
+		{
+			json_output = true;
+		}
+	}
+
+	err = settings_delete(name);
+	if (err < 0)
+	{
+		if (json_output)
+		{
+			shell_fprintf(shell, SHELL_VT100_COLOR_RED,
+						  "{\"status\": \"failed\", \"msg\": \"setting not found\"}\n");
+		}
+		else
+		{
+			shell_error(shell, "Setting not found");
+		}
+	}
+	else
+	{
+
+		if (json_output)
+		{
+			shell_fprintf(shell, SHELL_VT100_COLOR_GREEN,
+						  "{\"status\": \"success\"}\n");
+		}
+		else
+		{
+			shell_fprintf(shell, SHELL_NORMAL,
+						  "Setting %s deleted\n", name);
+		}
+	}
+
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(settings_commands,
 							   SHELL_CMD_ARG(set, NULL,
 											 "set a module config\n"
@@ -252,6 +300,14 @@ SHELL_STATIC_SUBCMD_SET_CREATE(settings_commands,
 											 "$ settings get pyrinas/hostname\n"
 											 "$ settings get pyrinas/port",
 											 cmd_settings_get, 2, 1),
+							   SHELL_CMD_ARG(delete, NULL,
+											 "delete a module config value\n"
+											 "usage:\n"
+											 "$ settings delete <key>\n"
+											 "example:\n"
+											 "$ settings delete pyrinas/hostname\n"
+											 "$ settings delete pyrinas/port",
+											 cmd_settings_delete, 2, 1),
 							   SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(settings, &settings_commands, "Settings commands", NULL);
