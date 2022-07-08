@@ -57,15 +57,48 @@ static struct k_work_delayable bt_send_work;
 static void bt_start_scan_work_handler(struct k_work *work);
 static struct k_work_delayable bt_start_scan_work;
 
+static void bt_stop_scan_work_handler(struct k_work *work);
+static struct k_work_delayable bt_stop_scan_work;
+
 /* Storing static config*/
 static ble_central_config_t m_config;
 
 /* Track scan failure */
 static atomic_t scan_failure;
 
+/* Scan timeout */
+static void scan_timeout_timer_handler(struct k_timer *dummy);
+static void scan_restart_timer_handler(struct k_timer *dummy);
+
+/* Timers */
+K_TIMER_DEFINE(scan_timeout_timer, scan_timeout_timer_handler, NULL);
+K_TIMER_DEFINE(scan_restart_timer, scan_restart_timer_handler, NULL);
+
+static void scan_timeout_timer_handler(struct k_timer *dummy)
+{
+
+    k_work_reschedule(&bt_stop_scan_work, K_NO_WAIT);
+
+    /* Schedule next scan */
+    if (atomic_get(&m_num_connected) < m_config.device_count)
+    {
+        k_timer_start(&scan_restart_timer, K_SECONDS(30), K_NO_WAIT);
+    }
+}
+
+static void scan_restart_timer_handler(struct k_timer *dummy)
+{
+    k_work_reschedule(&bt_start_scan_work, K_NO_WAIT);
+}
+
+static void bt_stop_scan_work_handler(struct k_work *work)
+{
+    ble_central_scan_stop();
+}
+
 static void bt_start_scan_work_handler(struct k_work *work)
 {
-    // bt_start_scan();
+    ble_central_scan_start();
 }
 
 static void bt_send_work_handler(struct k_work *work)
@@ -294,7 +327,7 @@ static void pairing_complete(struct bt_conn *conn, bool bonded)
 
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-    LOG_INF("Pairing completed: %s, bonded: %d", addr, bonded);
+    LOG_INF("Pairing completed: %s, bonded: %d", log_strdup(addr), bonded);
 }
 
 static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
@@ -496,6 +529,20 @@ static void gatt_discover(struct bt_conn *conn)
     }
 }
 
+void ble_central_scan_stop(void)
+{
+    int err;
+
+    LOG_INF("Scan stop!");
+
+    /* Stop scanning */
+    err = bt_scan_stop();
+    if (err && (err != -EALREADY))
+    {
+        LOG_ERR("Stop LE scan failed (err %d)", err);
+    }
+}
+
 void ble_central_scan_start()
 {
 
@@ -506,6 +553,9 @@ void ble_central_scan_start()
     /* Only scans if we have devices */
     if (m_config.device_count == 0)
         return;
+
+    /*Set timeout*/
+    k_timer_start(&scan_timeout_timer, K_SECONDS(5), K_NO_WAIT);
 
     LOG_INF("Scan start!");
 
@@ -535,8 +585,6 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
     LOG_INF("Disconnected. (reason 0x%02x)", reason);
 
-    bool advertise = true;
-
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
 
@@ -559,16 +607,15 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
             atomic_dec(&m_num_connected);
         }
 
-        // Set this flag to start adv at the end
-        advertise = true;
-
         // Break from loop
         break;
     }
 
-    // Start scanning again and re-connect if found
-    if (advertise)
+    /* Start scanning if we're < max connections */
+    if (atomic_get(&m_num_connected) < m_config.device_count)
+    {
         ble_central_scan_start();
+    }
 }
 
 static void connected(struct bt_conn *conn, uint8_t conn_err)
@@ -714,6 +761,7 @@ int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init
     /* Set up work */
     k_work_init_delayable(&bt_send_work, bt_send_work_handler);
     k_work_init_delayable(&bt_start_scan_work, bt_start_scan_work_handler);
+    k_work_init_delayable(&bt_stop_scan_work, bt_stop_scan_work_handler);
 
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
@@ -737,21 +785,9 @@ int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init
     return 0;
 }
 
-bool ble_central_is_connected()
+int ble_central_is_connected()
 {
-
-    bool ready = false;
-    for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
-    {
-        if (m_conns[i].conn != NULL)
-        {
-            ready = true;
-            break;
-        }
-    }
-
-    // Returns true if connected
-    return ready;
+    return (int)atomic_get(&m_num_connected);
 }
 
 void ble_central_set_whitelist(ble_central_config_t *config)
@@ -793,8 +829,6 @@ void ble_central_set_whitelist(ble_central_config_t *config)
         {
             LOG_ERR("Unable to set scan filters!");
         }
-
-        ble_central_scan_start();
     }
     else
     {

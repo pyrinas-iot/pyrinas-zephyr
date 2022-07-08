@@ -21,6 +21,13 @@ config AT_SHELL_CMD_RESPONSE_MAX_LEN
 
 endif # PYRINAS_AT_SHELL
 
+menuconfig PYRINAS_CREDENTIALS_SHELL
+	bool "Credentials shell."
+	depends on SETTINGS
+	depends on SHELL
+	help
+	  Adds the ability to set TLS credentials via shell.
+
 menuconfig PYRINAS_SETTINGS_SHELL
 	bool "Settings Shell"
 	depends on SETTINGS

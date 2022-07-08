@@ -12,7 +12,7 @@
 #include <pyrinas_codec.h>
 
 /* Defines */
-#define IMEI_LEN 15
+#define PYRINAS_DEV_ID_LEN 15
 #define PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT 2
 #define PYRINAS_OTA_PACKAGE_MAX_FILE_PATH_CHARS 128
 
@@ -166,7 +166,7 @@ typedef void (*pyrinas_cloud_application_cb_t)(const uint8_t *topic, size_t topi
 typedef struct
 {
   pyrinas_cloud_application_cb_t cb;
-  char full_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + IMEI_LEN + CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE];
+  char full_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + PYRINAS_DEV_ID_LEN + CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE];
   char topic[CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE];
   size_t topic_len;
 } pryinas_cloud_application_cb_entry_t;

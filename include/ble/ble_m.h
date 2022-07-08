@@ -22,22 +22,22 @@
  */
 typedef struct
 {
-  susbcribe_handler_t evt_handler;
-  pyrinas_event_name_data_t name;
+	susbcribe_handler_t evt_handler;
+	pyrinas_event_name_data_t name;
 } ble_subscription_handler_t;
 
 typedef struct
 {
-  ble_subscription_handler_t subscribers[BLE_SETTINGS_MAX_SUBSCRIPTIONS];
-  uint8_t count;
+	ble_subscription_handler_t subscribers[BLE_SETTINGS_MAX_SUBSCRIPTIONS];
+	uint8_t count;
 } ble_subscription_list_t;
 
 /**@brief Different device "modes"
  */
 typedef enum
 {
-  ble_mode_peripheral,
-  ble_mode_central,
+	ble_mode_peripheral,
+	ble_mode_central,
 } ble_mode_t;
 
 /**@brief BLE callback function to main context.
@@ -47,11 +47,11 @@ typedef enum
  */
 typedef struct
 {
-  ble_mode_t mode;
-  union
-  {
-    ble_central_config_t central_config;
-  };
+	ble_mode_t mode;
+	union
+	{
+		ble_central_config_t central_config;
+	};
 
 } ble_stack_init_t;
 
@@ -67,7 +67,9 @@ void ble_stack_init(ble_stack_init_t *init);
 
 /**@brief Function for starting the scanning.
  */
-void scan_start(void);
+void ble_scan_start(void);
+
+void ble_scan_stop(void);
 
 /**@brief Function for publishing.
  */
@@ -92,7 +94,7 @@ void ble_erase_bonds(void);
  * @retval true     If peripheral device is connected.
  * @retval false    If peripheral device is not connected.
  */
-bool ble_is_connected(void);
+int ble_is_connected(void);
 
 /**@brief Function for obtaining connection handle.
  *

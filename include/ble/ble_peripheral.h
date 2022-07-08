@@ -11,8 +11,8 @@
 
 #include "ble_handlers.h"
 
-//TODO document
-bool ble_peripheral_is_connected(void);
+// TODO document
+int ble_peripheral_is_connected(void);
 void ble_peripheral_disconnect(void);
 void ble_peripheral_attach_handler(encoded_data_handler_t raw_evt_handler);
 void ble_peripheral_write(const uint8_t *data, uint16_t size);

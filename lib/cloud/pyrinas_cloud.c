@@ -28,15 +28,19 @@ LOG_MODULE_REGISTER(pyrinas_cloud);
 /* Security tag for fetching certs */
 static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
 
+/* Cloud credentials */
+static uint8_t cloud_credentials[3][1024];
+static uint8_t https_credential[2048];
+
 /* Buffers for MQTT client. */
 static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
 static uint8_t tx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
 
 /* Topics */
-char ota_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC) + IMEI_LEN];
-char ota_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC) + IMEI_LEN];
-char telemetry_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC) + IMEI_LEN];
-char application_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + IMEI_LEN + CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE];
+char ota_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC) + PYRINAS_DEV_ID_LEN];
+char ota_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC) + PYRINAS_DEV_ID_LEN];
+char telemetry_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC) + PYRINAS_DEV_ID_LEN];
+char application_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + PYRINAS_DEV_ID_LEN + CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE];
 
 /* The mqtt client struct */
 static struct mqtt_client client;
@@ -85,6 +89,9 @@ struct mqtt_utf8 mqtt_user_name, mqtt_password;
 
 /* Track message id*/
 static uint16_t message_id = 1;
+
+/* Is init */
+bool is_init = false;
 
 /* Memory for username, password, port and hostname */
 static char m_username[128] = {0};
@@ -178,7 +185,7 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     param.dup_flag = 0;
     param.retain_flag = 0;
 
-    LOG_INF("Publishing %d bytes to topic: %.*s", data_len, topic_len, log_strdup(topic));
+    LOG_INF("Publishing %d bytes to topic: %s", data_len, log_strdup(topic));
 
     int err = mqtt_publish(&client, &param);
 
@@ -189,12 +196,12 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
 static int unsubscribe(char *topic, size_t len)
 {
     struct mqtt_topic subscribe_topic = {
-        .topic = {.utf8 = topic,
-                  .size = len},
-        .qos = MQTT_QOS_1_AT_LEAST_ONCE};
+    .topic = {.utf8 = topic,
+      .size = len},
+    .qos = MQTT_QOS_1_AT_LEAST_ONCE};
 
     const struct mqtt_subscription_list subscription_list = {
-        .list = &subscribe_topic, .list_count = 1, .message_id = message_id++};
+    .list = &subscribe_topic, .list_count = 1, .message_id = message_id++};
 
     printk("Unsubscribing to: %s len %u\n", topic, len);
 
@@ -289,7 +296,7 @@ int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *p_telem
 
     int err;
     size_t data_size = 0;
-    char data[CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE];
+    char data[CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE] = {0};
 
     /* Encode data */
     err = encode_telemetry_data(p_telemetry_data, data, sizeof(data), &data_size);
@@ -692,7 +699,10 @@ static int broker_init(char *hostname, uint16_t port)
 
     err = getaddrinfo(hostname, NULL, &hints, &result);
     if (err)
+    {
+        LOG_ERR("Unable to get address.");
         return err;
+    }
 
     addr = result;
     err = -ENOENT;
@@ -789,6 +799,9 @@ static int settings_read_callback(const char *key,
 
     /* Read! */
     num_read_bytes = read_cb(cb_arg, params->buf, num_read_bytes);
+
+    /* Set bytes read.. */
+    params->len = num_read_bytes;
 
     return 0;
 }
@@ -937,9 +950,75 @@ int pyrinas_cloud_disconnect()
     return 0;
 }
 
+#if defined(CONFIG_NET_NATIVE)
+static int load_credential(int tag, enum tls_credential_type type, uint8_t *buf, size_t buf_len)
+{
+    int err;
+    struct pyrinas_cloud_settings_params params = {0};
+    char name[64] = {0};
+
+    snprintf(name, sizeof(name), "pyrinas/cred/%i/%i", tag, type);
+
+    LOG_INF("Getting %s", log_strdup(name));
+
+    params.len = buf_len;
+    params.buf = buf;
+
+    /* First get data from disk. */
+    err = settings_load_subtree_direct(name, settings_read_callback, &params);
+    if (err < 0 || !params.found)
+    {
+        LOG_INF("%s not found", log_strdup(name));
+        return -EINVAL;
+    }
+    else
+    {
+        LOG_DBG("%s found", log_strdup(name));
+    }
+
+    LOG_HEXDUMP_DBG(params.buf, params.len, "");
+
+    LOG_DBG("Cred is %i bytes", params.len);
+
+    /* Then add the credential(s) */
+    err = tls_credential_add(tag, type,
+                             buf, params.len);
+    if (err < 0)
+    {
+        LOG_ERR("Failed to register public certificate: %d", err);
+        return err;
+    }
+
+    LOG_INF("Credential %s added! %i bytes", log_strdup(name), params.len);
+
+    return 0;
+}
+
+static int tls_init(void)
+{
+    int err = 0;
+
+    /* Get CA, cert and pk*/
+    for (int i = TLS_CREDENTIAL_CA_CERTIFICATE; i <= TLS_CREDENTIAL_PRIVATE_KEY; i++)
+    {
+        err = load_credential(CONFIG_PYRINAS_CLOUD_SEC_TAG, i, cloud_credentials[i - 1], sizeof(cloud_credentials[i - 1]));
+        if (err)
+            LOG_WRN("Unable to load.");
+    }
+
+    /* Get HTTPS cert */
+    load_credential(CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG, TLS_CREDENTIAL_CA_CERTIFICATE, https_credential, sizeof(https_credential));
+
+    return 0;
+}
+#endif
+
 int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 {
     int err;
+
+    if (is_init)
+        return -EALREADY;
 
     /* TODO: Determine values of all settings... */
     struct pyrinas_cloud_client_init init = {0};
@@ -954,6 +1033,16 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
         LOG_ERR("Unable to load settings. Err: %i", err);
         return err;
     }
+
+#if defined(CONFIG_NET_NATIVE)
+    /* Load TLS certs */
+    err = tls_init();
+    if (err)
+    {
+        LOG_ERR("Unable to load TLS certs. Err: %i", err);
+        return err;
+    }
+#endif
 
     /* Set buf */
     params.len = sizeof(m_hostname);
@@ -1077,6 +1166,8 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
         return err;
     }
 
+    is_init = true;
+
     return 0;
 }
 
@@ -1087,8 +1178,8 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
     int err = 0;
 
     size_t data_len = 0;
-    uint8_t data[CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE];
-    uint8_t topic[CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE];
+    uint8_t data[CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE] = {0};
+    uint8_t topic[CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE] = {0};
 
     struct pyrinas_cloud_telemetry_data telemetry_data;
 
@@ -1156,7 +1247,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
 {
 
     char uid[14];
-    char topic[CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE];
+    char topic[CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE] = {0};
     int ret;
 
     /* Memset uid */
@@ -1192,7 +1283,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
 {
     int ret;
-    char topic[CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE];
+    char topic[CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE] = {0};
 
     /* Create topic */
     ret = snprintf(topic, sizeof(topic),
@@ -1243,12 +1334,12 @@ start:
     fds.fd = client.transport.tcp.sock;
     fds.events = POLLIN;
 
-    /* Set timeout for sening data */
+    /* Set timeout for sending data */
     err = setsockopt(fds.fd, SOL_SOCKET, SO_SNDTIMEO,
                      &timeout, sizeof(timeout));
     if (err == -1)
     {
-        LOG_ERR("Failed to set timeout, errno: %d", errno);
+        LOG_WRN("Failed to set timeout, errno: %d", errno);
     }
     else
     {

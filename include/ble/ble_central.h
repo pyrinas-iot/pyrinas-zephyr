@@ -17,22 +17,23 @@
 /* Struct for initailizing bluetooth central */
 typedef struct
 {
-    bt_addr_le_t addr[CONFIG_BT_MAX_CONN];
-    uint8_t device_count;
+	bt_addr_le_t addr[CONFIG_BT_MAX_CONN];
+	uint8_t device_count;
 } ble_central_config_t;
 
 typedef struct
 {
-    uint8_t *data;
-    uint16_t len;
+	uint8_t *data;
+	uint16_t len;
 } ble_central_broadcast_t;
 
-//TODO: document this.
-bool ble_central_is_connected(void);
+// TODO: document this.
+int ble_central_is_connected(void);
 void ble_central_disconnect(void);
 void ble_central_attach_handler(encoded_data_handler_t raw_evt_handler);
 void ble_central_write(const uint8_t *data, uint16_t size);
 void ble_central_scan_start(void);
+void ble_central_scan_stop(void);
 int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init);
 void ble_central_ready(void);
 void ble_central_process(void);

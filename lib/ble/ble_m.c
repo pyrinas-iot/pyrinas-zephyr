@@ -36,19 +36,19 @@ static struct k_work_q ble_work_q;
 
 static int subscriber_search(pyrinas_event_name_data_t *event_name); /* Forward declaration of subscriber_search */
 
-bool ble_is_connected(void)
+int ble_is_connected(void)
 {
 
-    bool is_connected = false;
+    int num_connected = 0;
 
 #if defined(CONFIG_PYRINAS_PERIPH_ENABLED)
-    is_connected = ble_peripheral_is_connected();
+    num_connected += ble_peripheral_is_connected();
 #elif defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
-    is_connected = ble_central_is_connected();
+    num_connected += ble_central_is_connected();
 #endif
     // LOG_INF("%sconnected. %d", is_connected ? "" : "not ", m_config.mode);
 
-    return is_connected;
+    return num_connected;
 }
 
 void ble_disconnect(void)
@@ -169,10 +169,17 @@ void advertising_start(void)
 #endif
 }
 
-void scan_start(void)
+void ble_scan_start(void)
 {
 #if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
     ble_central_scan_start();
+#endif
+}
+
+void ble_scan_stop(void)
+{
+#if defined(CONFIG_PYRINAS_CENTRAL_ENABLED)
+    ble_central_scan_stop();
 #endif
 }
 
