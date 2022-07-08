@@ -9,15 +9,22 @@
 #include <random/rand32.h>
 #include <net/mqtt.h>
 #include <net/socket.h>
-#include <net/fota_download.h>
 #include <assert.h>
 #include <settings/settings.h>
+
+#if defined(CONFIG_PYRINAS_CLOUD_NRF_OTA_ENABLED)
+#include <net/fota_download.h>
+#endif
 
 #include <pyrinas_cloud/pyrinas_cloud.h>
 #include <pyrinas_cloud/pyrinas_version.h>
 
 #include "pyrinas_cloud_codec.h"
 #include "pyrinas_cloud_helper.h"
+
+#if defined(CONFIG_FOTA_DOWNLOAD)
+#include <net/fota_download.h>
+#endif
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(pyrinas_cloud);
@@ -865,7 +872,9 @@ static int client_init(struct pyrinas_cloud_client_init *init, struct mqtt_clien
     tls_config->sec_tag_count = ARRAY_SIZE(sec_tag_list);
     tls_config->sec_tag_list = sec_tag_list;
     tls_config->hostname = init->hostname;
+#if defined(CONFIG_NRF_MODEM)
     tls_config->session_cache = TLS_SESSION_CACHE_DISABLED;
+#endif
 
     return 0;
 }
@@ -1137,7 +1146,9 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 
 /* Init FOTA client */
 #ifdef CONFIG_FOTA_DOWNLOAD
-    fota_download_init(fota_evt);
+    err = fota_download_init(fota_evt);
+    if (err)
+        LOG_WRN("Unable to init FOTA client. Err: %i", err);
 #endif
 
     /* Set up topics */

@@ -9,17 +9,23 @@ menu "Pyrinas Cloud"
 config PYRINAS_CLOUD_ENABLED
 	select MQTT_LIB
 	select MQTT_LIB_TLS
-	select FOTA_DOWNLOAD
-	select DOWNLOAD_CLIENT
 	select IMG_MANAGER
 	select IMG_ERASE_PROGRESSIVELY
 	select DFU_TARGET
 	select REBOOT
+	imply DNS_RESOLVER if NET_NATIVE
 	bool "Enable Pyrinas MQTT Cloud"
 	help
 		This option enables Pyrinas Cloud functions.
 
 if PYRINAS_CLOUD_ENABLED
+
+config PYRINAS_CLOUD_NRF_OTA_ENABLED
+	select FOTA_DOWNLOAD
+	select DOWNLOAD_CLIENT
+	bool "Enable OTA based from NCS"
+	help
+		This option enables Pyrinas Cloud OTA functionality based on NCS.
 
 config PYRINAS_CLOUD_WORKQUEUE_STACK_SIZE
 	int "Pyrinas Cloud workqueue stack size"
