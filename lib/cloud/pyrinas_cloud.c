@@ -173,7 +173,7 @@ int pyrinas_cloud_unsubscribe(char *topic)
 static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t data_len, uint16_t message_id)
 {
 
-    LOG_DBG("Pub to %.*s", topic_len, topic);
+    LOG_DBG("Pub to %.*s", topic_len, (char *)topic);
 
     if (atomic_get(&cloud_state_s) != cloud_state_connected)
     {
@@ -192,7 +192,7 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     param.dup_flag = 0;
     param.retain_flag = 0;
 
-    LOG_INF("Publishing %d bytes to topic: %.*s", data_len, topic_len, topic);
+    LOG_INF("Publishing %d bytes to topic: %.*s", data_len, topic_len, (char *)topic);
 
     int err = mqtt_publish(&client, &param);
 
@@ -228,7 +228,7 @@ static int subscribe(char *topic, size_t len, uint16_t message_id)
     const struct mqtt_subscription_list subscription_list = {
         .list = &subscribe_topic, .list_count = 1, .message_id = message_id};
 
-    LOG_INF("Subscribing to topic: %s", topic);
+    LOG_INF("Subscribing to topic: %s", (char *)topic);
 
     return mqtt_subscribe(&client, &subscription_list);
 }
@@ -397,7 +397,7 @@ static void fota_start_fn(struct k_work *unused)
         return;
     }
 
-    LOG_DBG("%s/%s using tag %d", ota_package.files[index].host, ota_package.files[index].file, sec_tag);
+    LOG_DBG("%s/%s using tag %d", (char *)ota_package.files[index].host, (char *)ota_package.files[index].file, sec_tag);
 
     /* Start download uses default port and APN*/
     err = fota_download_start(ota_package.files[index].host, ota_package.files[index].file, sec_tag, 0, 0);
@@ -437,7 +437,7 @@ static void publish_sort(struct pyrinas_cloud_evt *message)
     /* If its the OTA sub topic process */
     if (strncmp(ota_sub_topic, message->data.msg.topic, message->data.msg.topic_len) == 0)
     {
-        LOG_DBG("Found %s. Data: %s Data size: %d", ota_sub_topic, message->data.msg.data, message->data.msg.data_len);
+        LOG_DBG("Found %s. Data: %s Data size: %d", (char *)ota_sub_topic, (char *)message->data.msg.data, message->data.msg.data_len);
 
         /* Set check flag */
         atomic_set(&initial_ota_check, 1);
@@ -517,12 +517,12 @@ static void publish_sort(struct pyrinas_cloud_evt *message)
         if (callbacks[i].cb == NULL)
             continue;
 
-        LOG_DBG("%s %d", message->data.msg.data, message->data.msg.topic_len);
+        LOG_DBG("%s %d", (char *)message->data.msg.data, message->data.msg.topic_len);
 
         /* Determine if this is the topic*/
         if (strncmp(callbacks[i].full_topic, message->data.msg.topic, message->data.msg.topic_len) == 0)
         {
-            LOG_DBG("Found %s", callbacks[i].topic);
+            LOG_DBG("Found %s", (char *)callbacks[i].topic);
 
             /* Callbacks to app context */
             callbacks[i].cb(callbacks[i].topic, callbacks[i].topic_len, message->data.msg.data, message->data.msg.data_len);
@@ -968,7 +968,7 @@ static int load_credential(int tag, enum tls_credential_type type, uint8_t *buf,
 
     snprintf(name, sizeof(name), "pyrinas/cred/%i/%i", tag, type);
 
-    LOG_INF("Getting %s", name);
+    LOG_INF("Getting %s", (char *)name);
 
     params.len = buf_len;
     params.buf = buf;
@@ -977,12 +977,12 @@ static int load_credential(int tag, enum tls_credential_type type, uint8_t *buf,
     err = settings_load_subtree_direct(name, settings_read_callback, &params);
     if (err < 0 || !params.found)
     {
-        LOG_INF("%s not found", name);
+        LOG_INF("%s not found", (char *)name);
         return -EINVAL;
     }
     else
     {
-        LOG_DBG("%s found", name);
+        LOG_DBG("%s found", (char *)name);
     }
 
     LOG_HEXDUMP_DBG(params.buf, params.len, "");
@@ -998,7 +998,7 @@ static int load_credential(int tag, enum tls_credential_type type, uint8_t *buf,
         return err;
     }
 
-    LOG_INF("Credential %s added! %i bytes", name, params.len);
+    LOG_INF("Credential %s added! %i bytes", (char *)name, params.len);
 
     return 0;
 }
@@ -1064,7 +1064,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     }
     else
     {
-        LOG_DBG("hostname %s", m_hostname);
+        LOG_DBG("hostname %s", (char *)m_hostname);
         init.hostname = m_hostname;
     }
 
@@ -1098,7 +1098,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     }
     else
     {
-        LOG_DBG("user %i %s", strlen(m_username), m_username);
+        LOG_DBG("user %i %s", strlen(m_username), (char *)m_username);
         init.username = m_username;
     }
 
@@ -1117,7 +1117,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     }
     else
     {
-        LOG_DBG("password %i %s", strlen(m_password), m_password);
+        LOG_DBG("password %i %s", strlen(m_password), (char *)m_password);
         init.password = m_password;
     }
 
