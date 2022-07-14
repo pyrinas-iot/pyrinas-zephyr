@@ -192,7 +192,7 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     param.dup_flag = 0;
     param.retain_flag = 0;
 
-    LOG_INF("Publishing %d bytes to topic: %s", data_len, log_strdup(topic));
+    LOG_INF("Publishing %d bytes to topic: %.*s", data_len, topic_len, topic);
 
     int err = mqtt_publish(&client, &param);
 
@@ -228,7 +228,7 @@ static int subscribe(char *topic, size_t len, uint16_t message_id)
     const struct mqtt_subscription_list subscription_list = {
         .list = &subscribe_topic, .list_count = 1, .message_id = message_id};
 
-    LOG_INF("Subscribing to topic: %s", log_strdup(topic));
+    LOG_INF("Subscribing to topic: %s", topic);
 
     return mqtt_subscribe(&client, &subscription_list);
 }
@@ -620,7 +620,7 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         memcpy(message.data.msg.topic, p->message.topic.topic.utf8, p->message.topic.topic.size);
 
         LOG_DBG("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d", __func__,
-                __LINE__, evt->result, log_strdup(p->message.topic.topic.utf8), p->message.payload.len);
+                __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
 
         err = publish_get_payload(c, message.data.msg.data, p->message.payload.len);
         if (err >= 0)
@@ -968,7 +968,7 @@ static int load_credential(int tag, enum tls_credential_type type, uint8_t *buf,
 
     snprintf(name, sizeof(name), "pyrinas/cred/%i/%i", tag, type);
 
-    LOG_INF("Getting %s", log_strdup(name));
+    LOG_INF("Getting %s", name);
 
     params.len = buf_len;
     params.buf = buf;
@@ -977,12 +977,12 @@ static int load_credential(int tag, enum tls_credential_type type, uint8_t *buf,
     err = settings_load_subtree_direct(name, settings_read_callback, &params);
     if (err < 0 || !params.found)
     {
-        LOG_INF("%s not found", log_strdup(name));
+        LOG_INF("%s not found", name);
         return -EINVAL;
     }
     else
     {
-        LOG_DBG("%s found", log_strdup(name));
+        LOG_DBG("%s found", name);
     }
 
     LOG_HEXDUMP_DBG(params.buf, params.len, "");
@@ -998,7 +998,7 @@ static int load_credential(int tag, enum tls_credential_type type, uint8_t *buf,
         return err;
     }
 
-    LOG_INF("Credential %s added! %i bytes", log_strdup(name), params.len);
+    LOG_INF("Credential %s added! %i bytes", name, params.len);
 
     return 0;
 }
@@ -1064,7 +1064,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     }
     else
     {
-        LOG_DBG("hostname %s", log_strdup(m_hostname));
+        LOG_DBG("hostname %s", m_hostname);
         init.hostname = m_hostname;
     }
 
@@ -1098,7 +1098,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     }
     else
     {
-        LOG_DBG("user %i %s", strlen(m_username), log_strdup(m_username));
+        LOG_DBG("user %i %s", strlen(m_username), m_username);
         init.username = m_username;
     }
 
@@ -1117,7 +1117,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     }
     else
     {
-        LOG_DBG("password %i %s", strlen(m_password), log_strdup(m_password));
+        LOG_DBG("password %i %s", strlen(m_password), m_password);
         init.password = m_password;
     }
 
@@ -1139,7 +1139,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 #endif
 
     /* For debug purposes */
-    LOG_INF("Connecting to: %s on port %d", log_strdup(init.hostname), init.port);
+    LOG_INF("Connecting to: %s on port %d", init.hostname, init.port);
 
     /*Set the callback*/
     m_config = *p_config;
@@ -1274,7 +1274,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
         return ret;
     }
 
-    LOG_DBG("Sending from [%s] %s.", log_strdup(uid), log_strdup(evt->name.bytes));
+    LOG_DBG("Sending from [%s] %s.", uid, evt->name.bytes);
 
     /* Create topic */
     ret = snprintf(topic, sizeof(topic),

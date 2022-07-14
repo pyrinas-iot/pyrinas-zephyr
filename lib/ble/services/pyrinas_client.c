@@ -112,55 +112,7 @@ int bt_pyrinas_client_send(struct bt_pyrinas_client *pyrinas_c, const uint8_t *d
     return err;
 }
 
-int bt_pyrinas_handles_assign(struct bt_gatt_dm *dm,
-                              struct bt_pyrinas_client *pyrinas_c)
-{
-    const struct bt_gatt_dm_attr *gatt_service_attr =
-        bt_gatt_dm_service_get(dm);
-    const struct bt_gatt_service_val *gatt_service =
-        bt_gatt_dm_attr_service_val(gatt_service_attr);
-    const struct bt_gatt_dm_attr *gatt_chrc;
-    const struct bt_gatt_dm_attr *gatt_desc;
-
-    if (bt_uuid_cmp(gatt_service->uuid, BT_UUID_PYRINAS_SERVICE))
-    {
-        return -ENOTSUP;
-    }
-    LOG_DBG("Getting handles from PYRINAS service.");
-    memset(&pyrinas_c->handles, 0xFF, sizeof(pyrinas_c->handles));
-
-    /* PYRINAS Data Characteristic */
-    gatt_chrc = bt_gatt_dm_char_by_uuid(dm, BT_UUID_PYRINAS_DATA);
-    if (!gatt_chrc)
-    {
-        LOG_ERR("Missing PYRINAS Data characteristic.");
-        return -EINVAL;
-    }
-    /* PYRINAS TX */
-    gatt_desc = bt_gatt_dm_desc_by_uuid(dm, gatt_chrc, BT_UUID_PYRINAS_DATA);
-    if (!gatt_desc)
-    {
-        LOG_ERR("Missing PYRINAS Data value descriptor in characteristic.");
-        return -EINVAL;
-    }
-    LOG_DBG("Found handle for PYRINAS Data characteristic.");
-    pyrinas_c->handles.data = gatt_desc->handle;
-    /* PYRINAS TX CCC */
-    gatt_desc = bt_gatt_dm_desc_by_uuid(dm, gatt_chrc, BT_UUID_GATT_CCC);
-    if (!gatt_desc)
-    {
-        LOG_ERR("Missing PYRINAS Data CCC in characteristic.");
-        return -EINVAL;
-    }
-    LOG_DBG("Found handle for CCC of PYRINAS TX characteristic.");
-    pyrinas_c->handles.data_ccc = gatt_desc->handle;
-
-    /* Assign connection instance. */
-    pyrinas_c->conn = bt_gatt_dm_conn_get(dm);
-    return 0;
-}
-
-int bt_pyrinas_subscribe_receive(struct bt_pyrinas_client *pyrinas_c)
+int bt_pyrinas_subscribe(struct bt_pyrinas_client *pyrinas_c)
 {
     int err;
 
@@ -184,7 +136,7 @@ int bt_pyrinas_subscribe_receive(struct bt_pyrinas_client *pyrinas_c)
     }
     else
     {
-        LOG_DBG("[SUBSCRIBED]");
+        LOG_INF("Subscribe success!");
     }
 
     return err;

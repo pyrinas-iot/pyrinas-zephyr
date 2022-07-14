@@ -13,8 +13,6 @@
 #include <bluetooth/conn.h>
 #include <bluetooth/uuid.h>
 #include <bluetooth/gatt.h>
-#include <bluetooth/gatt_dm.h>
-#include <bluetooth/scan.h>
 
 #include <ble/services/pyrinas_client.h>
 #include <ble/services/pyrinas.h>
@@ -28,21 +26,27 @@ LOG_MODULE_REGISTER(ble_central);
 /* Struct def */
 struct ble_c_connection
 {
-    /* Conn tracking */
-    struct bt_conn *conn;
-
     /* Queue related*/
     struct k_msgq q;
     char __aligned(4) q_buf[BLE_CENTRAL_QUEUE_SIZE * sizeof(struct ble_fifo_data)];
+    struct ble_fifo_data current_payload;
 
     /* Pyrinas Client */
     struct bt_pyrinas_client pyrinas_client;
+
+    /* Discover params*/
+    struct bt_gatt_discover_params discover_params;
 };
 
 /* Used to track connection */
 static atomic_t m_num_connected = ATOMIC_INIT(0);
 static atomic_t m_force_disconnect = ATOMIC_INIT(0);
 static struct ble_c_connection m_conns[CONFIG_BT_MAX_CONN];
+
+/*UUIDs*/
+static const struct bt_uuid *service_uuid = BT_UUID_PYRINAS_SERVICE;
+static const struct bt_uuid *data_uuid = BT_UUID_PYRINAS_DATA;
+static const struct bt_uuid *ccc_uuid = BT_UUID_GATT_CCC;
 
 /* Static local handlers */
 static encoded_data_handler_t m_evt_cb = NULL;
@@ -54,52 +58,8 @@ static struct k_work_q *ble_work_q;
 static void bt_send_work_handler(struct k_work *work);
 static struct k_work_delayable bt_send_work;
 
-static void bt_start_scan_work_handler(struct k_work *work);
-static struct k_work_delayable bt_start_scan_work;
-
-static void bt_stop_scan_work_handler(struct k_work *work);
-static struct k_work_delayable bt_stop_scan_work;
-
 /* Storing static config*/
 static ble_central_config_t m_config;
-
-/* Track scan failure */
-static atomic_t scan_failure;
-
-/* Scan timeout */
-static void scan_timeout_timer_handler(struct k_timer *dummy);
-static void scan_restart_timer_handler(struct k_timer *dummy);
-
-/* Timers */
-K_TIMER_DEFINE(scan_timeout_timer, scan_timeout_timer_handler, NULL);
-K_TIMER_DEFINE(scan_restart_timer, scan_restart_timer_handler, NULL);
-
-static void scan_timeout_timer_handler(struct k_timer *dummy)
-{
-
-    k_work_reschedule(&bt_stop_scan_work, K_NO_WAIT);
-
-    /* Schedule next scan */
-    if (atomic_get(&m_num_connected) < m_config.device_count)
-    {
-        k_timer_start(&scan_restart_timer, K_SECONDS(30), K_NO_WAIT);
-    }
-}
-
-static void scan_restart_timer_handler(struct k_timer *dummy)
-{
-    k_work_reschedule(&bt_start_scan_work, K_NO_WAIT);
-}
-
-static void bt_stop_scan_work_handler(struct k_work *work)
-{
-    ble_central_scan_stop();
-}
-
-static void bt_start_scan_work_handler(struct k_work *work)
-{
-    ble_central_scan_start();
-}
 
 static void bt_send_work_handler(struct k_work *work)
 {
@@ -107,16 +67,23 @@ static void bt_send_work_handler(struct k_work *work)
 
     bool schedule_work = false;
 
-    static struct ble_fifo_data ble_payload;
-
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
 
         // Check for invalid connection
-        if (m_conns[i].conn == NULL ||
+        if (m_conns[i].pyrinas_client.conn == NULL ||
             k_msgq_num_used_get(&m_conns[i].q) == 0)
         {
             continue;
+        }
+
+        struct bt_conn_info info = {0};
+        bt_conn_get_info(m_conns[i].pyrinas_client.conn, &info);
+        if (info.state != BT_CONN_STATE_CONNECTED)
+        {
+            LOG_WRN("Not connected!");
+            bt_conn_disconnect(m_conns[i].pyrinas_client.conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+            break;
         }
 
         /* Check if busy */
@@ -128,7 +95,7 @@ static void bt_send_work_handler(struct k_work *work)
         }
 
         // Get the latest item
-        err = k_msgq_peek(&m_conns[i].q, &ble_payload);
+        err = k_msgq_get(&m_conns[i].q, &m_conns[i].current_payload, K_NO_WAIT);
         if (err)
         {
             LOG_WRN("%d Unable to get data from queue", i);
@@ -139,7 +106,7 @@ static void bt_send_work_handler(struct k_work *work)
 
         // Send the data
         // ! This call is asyncronous. Need to call semaphore and then release once data is sent.
-        err = bt_pyrinas_client_send(&m_conns[i].pyrinas_client, ble_payload.data, ble_payload.len);
+        err = bt_pyrinas_client_send(&m_conns[i].pyrinas_client, m_conns[i].current_payload.data, m_conns[i].current_payload.len);
         if (err)
         {
             if (err == -EALREADY)
@@ -161,10 +128,6 @@ static void bt_send_work_handler(struct k_work *work)
         }
         else
         {
-            /* Success! Let's remove it now.. */
-            struct ble_fifo_data temp;
-            k_msgq_get(&m_conns[i].q, &temp, K_NO_WAIT);
-
             /* Still more data? Schedule work.*/
             if (k_msgq_num_used_get(&m_conns[i].q) > 0)
             {
@@ -180,171 +143,6 @@ static void bt_send_work_handler(struct k_work *work)
     }
 }
 
-static void scan_filter_match(struct bt_scan_device_info *device_info,
-                              struct bt_scan_filter_match *filter_match,
-                              bool connectable)
-{
-
-    int err;
-    struct bt_conn *conn;
-
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(device_info->recv_info->addr, addr, sizeof(addr));
-    LOG_INF("Scan match: [addr: %s]", log_strdup(addr));
-
-    // Stop scanning
-    err = bt_scan_stop();
-    if (err && (err != -EALREADY))
-    {
-        LOG_ERR("Stop LE scan failed (err %d)", err);
-    }
-
-    // Then connect
-    struct bt_conn_le_create_param *create_params =
-        BT_CONN_LE_CREATE_PARAM((BT_CONN_LE_OPT_CODED | BT_CONN_LE_OPT_NO_1M),
-                                BT_GAP_SCAN_FAST_INTERVAL,
-                                BT_GAP_SCAN_FAST_INTERVAL);
-
-    err = bt_conn_le_create(device_info->recv_info->addr, create_params, BT_LE_CONN_PARAM_DEFAULT, &conn);
-    if (err)
-    {
-        LOG_ERR("Unable to connect to device! Err: %i", err);
-
-        /* Start scanning if we're < max connections */
-        if (atomic_get(&m_num_connected) < m_config.device_count)
-        {
-            ble_central_scan_start();
-        }
-    }
-    else
-    {
-        /* unref connection obj in advance as app user */
-        bt_conn_unref(conn);
-    }
-}
-
-BT_SCAN_CB_INIT(scan_cb, scan_filter_match, NULL,
-                NULL, NULL);
-
-static int ble_central_scan_set_filters(void)
-{
-    int err;
-
-    /* Remove filters first */
-    bt_scan_filter_remove_all();
-
-    // Add a filter
-    err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_NAME, CONFIG_BT_DEVICE_NAME);
-    if (err)
-    {
-        LOG_WRN("Scanning filters cannot be set. Err: %d", err);
-        return err;
-    }
-
-    /* Loop through all potential device IDs  and add those filters */
-    for (int i = 0; i < m_config.device_count; i++)
-    {
-        LOG_HEXDUMP_INF(m_config.addr[i].a.val, 6, "Setting filter for:");
-
-        err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_ADDR, &m_config.addr[i]);
-        if (err)
-        {
-            LOG_WRN("Scanning filters cannot be set. Err: %d", err);
-            return err;
-        }
-    }
-
-    /* Enable all filters */
-    err = bt_scan_filter_enable(BT_SCAN_NAME_FILTER, true);
-    if (err)
-    {
-        LOG_WRN("Filters cannot be turned on. Err: %d", err);
-        return err;
-    }
-
-    /* Enable the address fileter only if there are devices! */
-    if (m_config.device_count > 0)
-    {
-        err = bt_scan_filter_enable(BT_SCAN_ADDR_FILTER, false);
-        if (err)
-        {
-            LOG_WRN("Filters cannot be turned on. Err: %d", err);
-            return err;
-        }
-    }
-
-    return 0;
-}
-
-static void ble_central_scan_init(void)
-{
-
-    // Passive scanning with phy coded enabled
-    struct bt_le_scan_param scan_param = {
-        .type = BT_LE_SCAN_TYPE_PASSIVE,
-        .options = BT_LE_SCAN_OPT_CODED | BT_LE_SCAN_OPT_NO_1M,
-        .interval = BT_GAP_SCAN_FAST_INTERVAL,
-        .window = BT_GAP_SCAN_FAST_WINDOW,
-    };
-
-    // !Note: this sets the default connection interval. If it needs
-    // !to be sped up, this is the place
-    struct bt_scan_init_param scan_init = {
-        .connect_if_match = false,
-        .scan_param = &scan_param,
-        .conn_param = BT_LE_CONN_PARAM_DEFAULT,
-    };
-
-    // Init scanning
-    bt_scan_init(&scan_init);
-    bt_scan_cb_register(&scan_cb);
-}
-
-static void auth_cancel(struct bt_conn *conn)
-{
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-    LOG_INF("Pairing cancelled: %s", addr);
-}
-
-static void pairing_confirm(struct bt_conn *conn)
-{
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-    bt_conn_auth_pairing_confirm(conn);
-
-    LOG_INF("Pairing confirmed: %s", addr);
-}
-
-static void pairing_complete(struct bt_conn *conn, bool bonded)
-{
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-    LOG_INF("Pairing completed: %s, bonded: %d", log_strdup(addr), bonded);
-}
-
-static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
-{
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-    LOG_INF("Pairing failed conn: %s, reason %d", addr, reason);
-}
-
-static struct bt_conn_auth_cb conn_auth_callbacks = {
-    .cancel = auth_cancel,
-    .pairing_confirm = pairing_confirm,
-    .pairing_complete = pairing_complete,
-    .pairing_failed = pairing_failed};
-
 void ble_central_write(const uint8_t *data, uint16_t len)
 {
 
@@ -354,7 +152,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     {
 
         // Check to make sure there's at least one active connection
-        if (m_conns[i].conn != NULL)
+        if (m_conns[i].pyrinas_client.conn != NULL)
         {
             ready = true;
             break;
@@ -383,7 +181,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
         // Queue if ready
-        if (m_conns[i].conn != NULL)
+        if (m_conns[i].pyrinas_client.conn != NULL)
         {
             LOG_DBG("Queing to connection %d with %i", i, k_msgq_num_used_get(&m_conns[i].q));
 
@@ -400,133 +198,97 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     k_work_reschedule_for_queue(ble_work_q, &bt_send_work, K_NO_WAIT);
 }
 
-static void force_disconnect(struct bt_conn *conn)
+static uint8_t discover_func(struct bt_conn *conn,
+                             const struct bt_gatt_attr *attr,
+                             struct bt_gatt_discover_params *params)
 {
-    // Disconnect from device
-    int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-    if (err && (err != -ENOTCONN))
-    {
-        LOG_ERR("Cannot disconnect peer (err:%d)", err);
-    }
-}
-
-static void discovery_completed(struct bt_gatt_dm *dm, void *context)
-{
-
-    LOG_INF("Discovery complete!");
-
     int err;
+    struct ble_c_connection *conn_data = NULL;
 
-    // Check if the conns are equal then set pyrinas_client
+    if (!attr)
+    {
+        LOG_INF("Attributes not found!");
+        (void)memset(params, 0, sizeof(*params));
+        bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        return BT_GATT_ITER_STOP;
+    }
+
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
-        /* Compare address to make sure we're assigning the right one */
-        if (m_conns[i].conn == bt_gatt_dm_conn_get(dm))
+        if (m_conns[i].pyrinas_client.conn == conn)
         {
-
-            /*Set handles*/
-            err = bt_pyrinas_handles_assign(dm, &m_conns[i].pyrinas_client);
-            if (err)
-            {
-                LOG_ERR("Unable to assign handles (err %d)", err);
-
-                /* Disconnect from device on error */
-                force_disconnect(bt_gatt_dm_conn_get(dm));
-
-                goto finish;
-            }
-
-            err = bt_pyrinas_subscribe_receive(&m_conns[i].pyrinas_client);
-            if (err)
-            {
-                LOG_ERR("Unable to enable notifications (err %d)", err);
-
-                // Disconnect from device on error
-                force_disconnect(bt_gatt_dm_conn_get(dm));
-
-                goto finish;
-            }
-
-            // Reset pyrinas_client
-            bt_pyrinas_client_reset(&m_conns[i].pyrinas_client);
-
+            conn_data = &m_conns[i];
             break;
         }
     }
 
-    LOG_DBG("Number of clients connected %i", (int)atomic_get(&m_num_connected));
-
-    // Set to ready
-    atomic_inc(&m_num_connected);
-
-finish:
-
-    /* Release data*/
-    bt_gatt_dm_data_release(dm);
-
-    // Start scanning if we're < max connections
-    if (atomic_get(&m_num_connected) < m_config.device_count)
+    if (conn_data == NULL)
     {
-        ble_central_scan_start();
+        LOG_ERR("No conn found!");
+        return BT_GATT_ITER_STOP;
     }
-}
 
-static void discovery_service_not_found(struct bt_conn *conn, void *ctx)
-{
-    LOG_WRN("Pyrinas data service not found!");
-}
+    LOG_DBG("[ATTRIBUTE] handle %u", attr->handle);
 
-static void discovery_error_found(struct bt_conn *conn, int err, void *ctx)
-{
-    LOG_WRN("The discovery procedure failed, err %d", err);
-
-    // Disconnect from device
-    force_disconnect(conn);
-}
-
-static struct bt_gatt_dm_cb discovery_cb = {
-    .completed = discovery_completed,
-    .service_not_found = discovery_service_not_found,
-    .error_found = discovery_error_found,
-};
-
-static void gatt_discover(struct bt_conn *conn)
-{
-    int err;
-
-    bool found = false;
-
-    struct ble_c_connection *dev_conn;
-
-    // Check if the conns are equal then set pyrinas_client
-    for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
+    if (!bt_uuid_cmp(conn_data->discover_params.uuid, BT_UUID_PYRINAS_SERVICE))
     {
-        // Copy the context address over
-        if (m_conns[i].conn == conn)
-        {
-            // This is used to start sec
-            dev_conn = &m_conns[i];
+        conn_data->discover_params.uuid = data_uuid;
+        conn_data->discover_params.start_handle = attr->handle + 1;
+        conn_data->discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
 
-            found = true;
+        err = bt_gatt_discover(conn, &conn_data->discover_params);
+        if (err)
+        {
+            LOG_ERR("Discover failed (err %d)", err);
+            bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         }
     }
-
-    if (!found)
+    else if (!bt_uuid_cmp(conn_data->discover_params.uuid,
+                          BT_UUID_PYRINAS_DATA))
     {
-        LOG_WRN("Should be found!");
-        return;
+        /* Assign handle */
+        conn_data->pyrinas_client.handles.data = bt_gatt_attr_value_handle(attr);
+
+        conn_data->discover_params.uuid = ccc_uuid;
+        conn_data->discover_params.start_handle = attr->handle + 2;
+        conn_data->discover_params.type = BT_GATT_DISCOVER_DESCRIPTOR;
+
+        err = bt_gatt_discover(conn, &conn_data->discover_params);
+        if (err)
+        {
+            LOG_ERR("Discover failed (err %d)", err);
+            bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        }
+    }
+    else
+    {
+
+        /* Assign handle */
+        conn_data->pyrinas_client.handles.data_ccc = attr->handle;
+
+        err = bt_pyrinas_subscribe(&conn_data->pyrinas_client);
+        if (err && err != -EALREADY)
+        {
+            LOG_ERR("Subscribe failed (err %d)", err);
+            bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        }
+        else
+        {
+            atomic_inc(&m_num_connected);
+
+            /* Start scanning if we're < max connections */
+            if (atomic_get(&m_num_connected) < m_config.device_count)
+            {
+                ble_central_scan_start();
+            }
+        }
+
+        (void)memset(params, 0, sizeof(*params));
+
+        return BT_GATT_ITER_STOP;
     }
 
-    err = bt_gatt_dm_start(dev_conn->conn,
-                           BT_UUID_PYRINAS_SERVICE,
-                           &discovery_cb,
-                           (void *)&dev_conn->pyrinas_client);
-    if (err)
-    {
-        LOG_ERR("could not start the discovery procedure, error "
-                "code: %d",
-                err);
-    }
+    return BT_GATT_ITER_STOP;
 }
 
 void ble_central_scan_stop(void)
@@ -536,10 +298,61 @@ void ble_central_scan_stop(void)
     LOG_INF("Scan stop!");
 
     /* Stop scanning */
-    err = bt_scan_stop();
+    err = bt_le_scan_stop();
     if (err && (err != -EALREADY))
     {
         LOG_ERR("Stop LE scan failed (err %d)", err);
+    }
+}
+
+static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+                         struct net_buf_simple *ad)
+{
+    /* Default connection */
+    struct bt_conn *conn = NULL;
+    char addr_str[BT_ADDR_LE_STR_LEN];
+    int err;
+
+    bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
+    LOG_DBG("Device found: %s (RSSI %d)", addr_str, rssi);
+
+    /* Check whitelist  */
+    bool found = false;
+    for (int i = 0; i < m_config.device_count; i++)
+    {
+        if (bt_addr_le_cmp(&m_config.addr[i], addr) == 0)
+        {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found)
+        return;
+
+    if (bt_le_scan_stop())
+    {
+        return;
+    }
+
+    LOG_INF("Connecting to: %s (RSSI %d)", addr_str, rssi);
+
+    /* Then connect */
+    struct bt_conn_le_create_param *create_params =
+        BT_CONN_LE_CREATE_PARAM((BT_CONN_LE_OPT_CODED | BT_CONN_LE_OPT_NO_1M),
+                                BT_GAP_SCAN_FAST_INTERVAL,
+                                BT_GAP_SCAN_FAST_INTERVAL);
+
+    err = bt_conn_le_create(addr, create_params, BT_LE_CONN_PARAM_DEFAULT, &conn);
+    if (err)
+    {
+        LOG_ERR("Create conn to %s failed (%u)", addr_str, err);
+
+        /* Start scanning if we're < max connections */
+        if (atomic_get(&m_num_connected) < m_config.device_count)
+        {
+            ble_central_scan_start();
+        }
     }
 }
 
@@ -548,36 +361,26 @@ void ble_central_scan_start()
 
     /* Force disconnect*/
     if (atomic_get(&m_force_disconnect) == 1)
+    {
+        LOG_INF("Force disconnect.");
         return;
+    }
 
     /* Only scans if we have devices */
     if (m_config.device_count == 0)
-        return;
-
-    /*Set timeout*/
-    k_timer_start(&scan_timeout_timer, K_SECONDS(5), K_NO_WAIT);
-
-    LOG_INF("Scan start!");
-
-    int err = bt_scan_start(BT_LE_SCAN_TYPE_PASSIVE);
-    if (err == -EALREADY)
     {
-        atomic_set(&scan_failure, 0);
+        LOG_INF("No devices to scan.");
+        return;
     }
-    else if (err)
+
+    int err = bt_le_scan_start(BT_LE_SCAN_CODED_ACTIVE, device_found);
+    if (err && err != -EALREADY)
     {
         LOG_WRN("Scanning failed to start, err %d", err);
-        atomic_set(&scan_failure, 1);
-
-        /* TODO: determine if this is needed */
-        // k_work_reschedule_for_queue(ble_work_q, &bt_start_scan_work, K_SECONDS(1));
         return;
     }
 
-    /* Reset this flag */
-    atomic_set(&scan_failure, 0);
-
-    LOG_INF("Scanning...");
+    LOG_INF("Scan start!");
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -588,20 +391,23 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
 
-        // Make sure the conn is the correct one
-        if (m_conns[i].conn != conn)
+        /* Make sure the conn is the correct one */
+        if (m_conns[i].pyrinas_client.conn != conn)
         {
             continue;
         }
 
-        // unref and NULL
-        bt_conn_unref(m_conns[i].conn);
-        m_conns[i].conn = NULL;
+        /* unref and NULL */
+        bt_conn_unref(m_conns[i].pyrinas_client.conn);
+        m_conns[i].pyrinas_client.conn = NULL;
 
-        // Purge data
+        /* Reset client */
+        bt_pyrinas_client_reset(&m_conns[i].pyrinas_client);
+
+        /* Purge data */
         k_msgq_purge(&m_conns[i].q);
 
-        // Reset ready flag
+        /* Reset ready flag */
         if (atomic_get(&m_num_connected))
         {
             atomic_dec(&m_num_connected);
@@ -628,10 +434,14 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
         LOG_ERR("Failed to connect: %d", conn_err);
 
         // Undo our connection
-        disconnected(conn, conn_err);
+        bt_conn_unref(conn);
 
-        // Re-start scanning
-        ble_central_scan_start();
+        /* Start scanning if we're < max connections */
+        if (atomic_get(&m_num_connected) < m_config.device_count)
+        {
+            ble_central_scan_start();
+        }
+
         return;
     }
 
@@ -641,19 +451,25 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
         // Set to an unused conn
-        if (m_conns[i].conn == NULL)
+        if (m_conns[i].pyrinas_client.conn == NULL)
         {
-            m_conns[i].conn = bt_conn_ref(conn);
+            m_conns[i].pyrinas_client.conn = conn;
+
+            /* Start discovery process */
+            m_conns[i].discover_params.uuid = service_uuid;
+            m_conns[i].discover_params.func = discover_func;
+            m_conns[i].discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+            m_conns[i].discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+            m_conns[i].discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+            err = bt_gatt_discover(m_conns[i].pyrinas_client.conn, &m_conns[i].discover_params);
+            if (err)
+            {
+                LOG_ERR("Discover failed (err %d)", err);
+                return;
+            }
             break;
         }
-    }
-
-    // Establish pairing/security
-    err = bt_conn_set_security(conn, BT_SECURITY_L2);
-    if (err)
-    {
-        LOG_ERR("Failed to set security: %d", err);
-        gatt_discover(conn);
     }
 }
 
@@ -666,17 +482,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 
     if (!err)
     {
-        LOG_INF("Security changed: %s level %u", log_strdup(addr), level);
-
-        for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
-        {
-            if (m_conns[i].conn == conn)
-            {
-                // Start discovery once security has changed
-                gatt_discover(conn);
-                break;
-            }
-        }
+        LOG_INF("Security changed: %s level %u", addr, level);
     }
     else
     {
@@ -684,7 +490,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
                 err);
 
         // Disconnect on security failure
-        int err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        int err = bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
         if (err && (err != -ENOTCONN))
         {
             LOG_ERR("Cannot disconnect peer (err:%d)", err);
@@ -747,27 +553,17 @@ int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init
     // Assign it!
     ble_work_q = p_ble_work_q;
 
-    int err = bt_conn_auth_cb_register(&conn_auth_callbacks);
-    if (err)
-    {
-        LOG_ERR("Failed to register authorization callbacks.");
-        return err;
-    }
-
     // Set this count to 0
     atomic_set(&m_num_connected, 0);
-    atomic_set(&scan_failure, 0);
 
     /* Set up work */
     k_work_init_delayable(&bt_send_work, bt_send_work_handler);
-    k_work_init_delayable(&bt_start_scan_work, bt_start_scan_work_handler);
-    k_work_init_delayable(&bt_stop_scan_work, bt_stop_scan_work_handler);
 
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
 
         /* Set conn to NULL*/
-        m_conns[i].conn = NULL;
+        m_conns[i].pyrinas_client.conn = NULL;
 
         // Init the msgq
         k_msgq_init(&m_conns[i].q, m_conns[i].q_buf, sizeof(struct ble_fifo_data), BLE_CENTRAL_QUEUE_SIZE);
@@ -775,9 +571,6 @@ int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init
 
     /* Callbacks for conection status */
     bt_conn_cb_register(&conn_callbacks);
-
-    /* Initialize scanning filters */
-    ble_central_scan_init();
 
     // Copy the config over
     m_config = *p_init;
@@ -797,7 +590,7 @@ void ble_central_set_whitelist(ble_central_config_t *config)
     atomic_set(&m_force_disconnect, 1);
 
     /* Stop scanning */
-    err = bt_scan_stop();
+    err = bt_le_scan_stop();
     if (err && (err != -EALREADY))
     {
         LOG_ERR("Stop LE scan failed (err %d)", err);
@@ -806,9 +599,9 @@ void ble_central_set_whitelist(ble_central_config_t *config)
     /* Disconnect from all */
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
-        if (m_conns[i].conn != NULL)
+        if (m_conns[i].pyrinas_client.conn != NULL)
         {
-            force_disconnect(m_conns[i].conn);
+            bt_conn_disconnect(m_conns[i].pyrinas_client.conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         }
     }
 
@@ -818,22 +611,6 @@ void ble_central_set_whitelist(ble_central_config_t *config)
     LOG_INF("Device count: %d", m_config.device_count);
 
     atomic_set(&m_force_disconnect, 0);
-
-    /* Start scan with new filters.. */
-    if (m_config.device_count > 0)
-    {
-
-        /* Initialize scanning filters */
-        err = ble_central_scan_set_filters();
-        if (err)
-        {
-            LOG_ERR("Unable to set scan filters!");
-        }
-    }
-    else
-    {
-        bt_scan_filter_remove_all();
-    }
 }
 
 #endif
