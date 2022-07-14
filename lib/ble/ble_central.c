@@ -56,54 +56,13 @@ static struct k_work_q *ble_work_q;
 static void bt_send_work_handler(struct k_work *work);
 static struct k_work_delayable bt_send_work;
 
-static void bt_start_scan_work_handler(struct k_work *work);
-static struct k_work_delayable bt_start_scan_work;
-
-static void bt_stop_scan_work_handler(struct k_work *work);
-static struct k_work_delayable bt_stop_scan_work;
-
 /* Storing static config*/
 static ble_central_config_t m_config;
-
-/* Scan timeout */
-static void scan_timeout_timer_handler(struct k_timer *dummy);
-static void scan_restart_timer_handler(struct k_timer *dummy);
-
-/* Timers */
-K_TIMER_DEFINE(scan_timeout_timer, scan_timeout_timer_handler, NULL);
-K_TIMER_DEFINE(scan_restart_timer, scan_restart_timer_handler, NULL);
 
 /* Discover and subscribe
 params*/
 static struct bt_gatt_discover_params discover_params, ccc_discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
-
-static void scan_timeout_timer_handler(struct k_timer *dummy)
-{
-
-	k_work_reschedule(&bt_stop_scan_work, K_NO_WAIT);
-
-	/* Schedule next scan */
-	if (atomic_get(&m_num_connected) < m_config.device_count)
-	{
-		k_timer_start(&scan_restart_timer, K_SECONDS(30), K_NO_WAIT);
-	}
-}
-
-static void scan_restart_timer_handler(struct k_timer *dummy)
-{
-	k_work_reschedule(&bt_start_scan_work, K_NO_WAIT);
-}
-
-static void bt_stop_scan_work_handler(struct k_work *work)
-{
-	ble_central_scan_stop();
-}
-
-static void bt_start_scan_work_handler(struct k_work *work)
-{
-	ble_central_scan_start();
-}
 
 static void bt_send_work_handler(struct k_work *work)
 {
@@ -304,7 +263,7 @@ static uint8_t discover_func(struct bt_conn *conn,
 			/* Start scanning if we're < max connections */
 			if (atomic_get(&m_num_connected) < m_config.device_count)
 			{
-				k_work_reschedule(&bt_start_scan_work, K_NO_WAIT);
+				ble_central_scan_start();
 			}
 		}
 
@@ -390,7 +349,7 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 	{
 		LOG_ERR("Create conn to %s failed (%u)", addr_str, err);
 
-		k_work_reschedule(&bt_start_scan_work, K_NO_WAIT);
+		ble_central_scan_start();
 	}
 }
 
@@ -410,9 +369,6 @@ void ble_central_scan_start()
 		LOG_INF("No devices to scan.");
 		return;
 	}
-
-	/*Set timeout*/
-	k_timer_start(&scan_timeout_timer, K_SECONDS(5), K_NO_WAIT);
 
 	int err = bt_le_scan_start(BT_LE_SCAN_CODED_ACTIVE, device_found);
 	if (err && err != -EALREADY)
@@ -459,7 +415,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	/* Start scanning if we're < max connections */
 	if (atomic_get(&m_num_connected) < m_config.device_count)
 	{
-		k_work_reschedule(&bt_start_scan_work, K_NO_WAIT);
+		ble_central_scan_start();
 	}
 }
 
@@ -475,7 +431,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 		bt_conn_unref(conn);
 
 		// Re-start scanning
-		k_work_reschedule(&bt_start_scan_work, K_NO_WAIT);
+		ble_central_scan_start();
 
 		return;
 	}
@@ -553,8 +509,6 @@ int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init
 
 	/* Set up work */
 	k_work_init_delayable(&bt_send_work, bt_send_work_handler);
-	k_work_init_delayable(&bt_start_scan_work, bt_start_scan_work_handler);
-	k_work_init_delayable(&bt_stop_scan_work, bt_stop_scan_work_handler);
 
 	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
 	{
