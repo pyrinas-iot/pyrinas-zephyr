@@ -53,7 +53,7 @@ static void bypass_cb(const struct shell *shell, uint8_t *data, size_t len)
 			else
 			{
 
-				LOG_INF("Writing %i bytes to %s", raw_bin_len, log_strdup(name));
+				LOG_INF("Writing %i bytes to %s", raw_bin_len, name);
 #ifdef CONFIG_SETTINGS_RUNTIME
 				err = settings_runtime_set(name, raw_bin_buf, raw_bin_len);
 				if (err)

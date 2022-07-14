@@ -9,18 +9,10 @@ menu "Pyrinas Library"
 config PYRINAS_BLUETOOTH_ENABLED
 	select BT
 	select BT_EXT_ADV
-	select BT_EXT_ADV_LEGACY_SUPPORT
 	select BT_SETTINGS
-	select BT_SIGNING
-	select BT_PRIVACY
 	bool "Enable Pyrinas Bluetooth LR Hub"
 	help
 		This option enables Pyrinas overall.
-
-config APP_WIPE_STORAGE
-	bool "Option to clear the flash area before mounting"
-	help
-	  Use this to force an existing file system to be created.
 
 if PYRINAS_BLUETOOTH_ENABLED
 
@@ -41,18 +33,14 @@ choice
 config PYRINAS_CENTRAL_ENABLED
 	bool "Use Pyrinas in Central Mode"
 	select BT_SMP
-	select BT_GATT_NUS_C
 	select BT_CENTRAL
 	select BT_GATT_CLIENT
-	select BT_GATT_DM
-	select BT_SCAN
-	select BT_SCAN_FILTER_ENABLE
+	select BT_GATT_AUTO_DISCOVER_CCC
 	help
 		Use Pyrinas in Central Mode.
 
 config PYRINAS_PERIPH_ENABLED
 	bool "Use Pyrinas in Peripheral Mode"
-  select BT_GATT_NUS
 	help
 		Use Pyrinas in as a Peripheral Client
 

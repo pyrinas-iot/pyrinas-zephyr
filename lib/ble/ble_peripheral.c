@@ -167,14 +167,14 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 
     if (!err)
     {
-        LOG_INF("Security changed: %s level %u", log_strdup(addr), level);
+        LOG_INF("Security changed: %s level %u", addr, level);
 
         // Encryption is a go!
         atomic_set(&m_ready, 1);
     }
     else
     {
-        LOG_ERR("Security failed: %s level %u err %d", log_strdup(addr), level,
+        LOG_ERR("Security failed: %s level %u err %d", addr, level,
             err);
 
         // Disconnect on security failure
