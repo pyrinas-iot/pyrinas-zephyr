@@ -11,7 +11,7 @@
 #include <string.h>
 #include <math.h>
 
-#include "pyrinas_cloud_helper.h"
+#include <pyrinas_cloud/pyrinas_cloud_helper.h>
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(pyrinas_cloud_helper);

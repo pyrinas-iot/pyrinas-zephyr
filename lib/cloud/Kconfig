@@ -9,10 +9,6 @@ menu "Pyrinas Cloud"
 config PYRINAS_CLOUD_ENABLED
 	select MQTT_LIB
 	select MQTT_LIB_TLS
-	select IMG_MANAGER
-	select IMG_ERASE_PROGRESSIVELY
-	select DFU_TARGET
-	select REBOOT
 	imply DNS_RESOLVER if NET_NATIVE
 	bool "Enable Pyrinas MQTT Cloud"
 	help
@@ -20,12 +16,14 @@ config PYRINAS_CLOUD_ENABLED
 
 if PYRINAS_CLOUD_ENABLED
 
-config PYRINAS_CLOUD_NRF_OTA_ENABLED
-	select FOTA_DOWNLOAD
-	select DOWNLOAD_CLIENT
-	bool "Enable OTA based from NCS"
+config PYRINAS_CLOUD_OTA_ENABLED
+	select IMG_MANAGER
+	select IMG_ERASE_PROGRESSIVELY
+	select DFU_TARGET
+	select REBOOT
+	bool "Enable universal OTA"
 	help
-		This option enables Pyrinas Cloud OTA functionality based on NCS.
+		This option enables Pyrinas Cloud OTA functionality.
 
 config PYRINAS_CLOUD_WORKQUEUE_STACK_SIZE
 	int "Pyrinas Cloud workqueue stack size"
@@ -46,10 +44,6 @@ config PYRINAS_CLOUD_SEC_TAG
 	int "Security tag to use for the connection"
 	default 1234
 
-config PYRINAS_CLOUD_HTTPS_SEC_TAG
-	int "Security tag to use for HTTPS connection"
-	default 1235
-
 config PYRINAS_CLOUD_PEER_VERIFY
 	int "Peer verify parameter for mqtt_client"
 	default 2
@@ -62,25 +56,25 @@ config PYRINAS_CLOUD_PASSWORD
 config PYRINAS_CLOUD_USER_NAME
 	string "MQTT user name for autentication"
 
-config PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC
-	string "MQTT ota subscribe topic"
-	default "%.*s/ota/sub"
-
-config PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC
-	string "MQTT ota publish topic"
-	default "%.*s/ota/pub"
-
 config PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC
 	string "MQTT publish topic"
-	default "%.*s/tel/pub"
+	default "%.*s/tel/p"
 
 config PYRINAS_CLOUD_MQTT_APPLICATION_PUB_TOPIC
 	string "Application MQTT publish topic"
-	default "%.*s/app/pub/%.*s"
+	default "%.*s/app/p/%.*s"
 
 config PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC
 	string "Application MQTT subscribe topic"
-	default "%.*s/app/sub/%.*s"
+	default "%.*s/app/s/%.*s"
+
+config PYRINAS_CLOUD_MQTT_OTA_TOPIC
+	string "MQTT ota pub/sub topic"
+	default "%.*s/ota/%c"
+
+config PYRINAS_CLOUD_MQTT_OTA_DOWNLOAD_TOPIC
+	string "MQTT topic for downloading OTA image"
+	default "%.*s/ota/s/d"
 
 config PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME
 	string "MQTT broker hostname"
@@ -92,19 +86,25 @@ config PYRINAS_CLOUD_MQTT_BROKER_PORT
 
 config PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE
 	int "MQTT message buffer size"
+	default 4608 if PYRINAS_CLOUD_OTA_ENABLED
+	default 1024
+
+config PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE
+	int "MQTT payload size"
+	default 1152 if PYRINAS_CLOUD_OTA_ENABLED
 	default 512
 
 config PYRINAS_CLOUD_MQTT_TOPIC_SIZE
 	int "MQTT topic size"
 	default 128
 
-config PYRINAS_CLOUD_MQTT_PAYLOAD_SIZE
-	int "MQTT payload size"
-	default 512
-
 config PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE
 	int "MQTT payload size"
 	default 48
+
+config PYRINAS_CLOUD_MQTT_OTA_BLOCK_SIZE
+	int "Size of blocks transferred during OTA."
+	default 1024
 
 config PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT
 	int "Max application callback count."

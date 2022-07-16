@@ -12,18 +12,11 @@
 #include <assert.h>
 #include <settings/settings.h>
 
-#if defined(CONFIG_PYRINAS_CLOUD_NRF_OTA_ENABLED)
-#include <net/fota_download.h>
-#endif
-
 #include <pyrinas_cloud/pyrinas_cloud.h>
-#include <pyrinas_cloud/pyrinas_version.h>
+#include <pyrinas_cloud/pyrinas_cloud_codec.h>
 
-#include "pyrinas_cloud_codec.h"
-#include "pyrinas_cloud_helper.h"
-
-#if defined(CONFIG_FOTA_DOWNLOAD)
-#include <net/fota_download.h>
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
+#include <pyrinas_cloud/pyrinas_cloud_ota.h>
 #endif
 
 #include <logging/log.h>
@@ -37,17 +30,18 @@ static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
 
 /* Cloud credentials */
 static uint8_t cloud_credentials[3][1024];
-static uint8_t https_credential[2048];
 
 /* Buffers for MQTT client. */
-static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
-static uint8_t tx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE];
+static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE] = {0};
+static uint8_t tx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE] = {0};
 
 /* Topics */
-char ota_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC) + PYRINAS_DEV_ID_LEN];
-char ota_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC) + PYRINAS_DEV_ID_LEN];
-char telemetry_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC) + PYRINAS_DEV_ID_LEN];
-char application_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + PYRINAS_DEV_ID_LEN + CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE];
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
+char ota_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_TOPIC) + PYRINAS_DEV_ID_LEN + 1] = {0};
+char ota_download_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_OTA_DOWNLOAD_TOPIC) + PYRINAS_DEV_ID_LEN + 1] = {0};
+#endif
+char telemetry_pub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC) + PYRINAS_DEV_ID_LEN] = {0};
+char application_sub_topic[sizeof(CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC) + PYRINAS_DEV_ID_LEN + CONFIG_PYRINAS_CLOUD_APPLICATION_EVENT_NAME_MAX_SIZE] = {0};
 
 /* The mqtt client struct */
 static struct mqtt_client client;
@@ -60,36 +54,24 @@ static K_SEM_DEFINE(connection_poll_sem, 0, 1);
 
 /* Atomic flags */
 static atomic_val_t cloud_state_s = ATOMIC_INIT(cloud_state_disconnected);
-static atomic_val_t ota_state_s = ATOMIC_INIT(ota_state_ready);
-static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
 static atomic_t connection_poll_active;
 
 /* File descriptor */
 static struct pollfd fds;
 
-/* Structures for work */
-static struct k_work ota_request_work;
-static struct k_work ota_done_work;
-static struct k_work on_connect_work;
-static struct k_work_delayable ota_check_subscribed_work;
-static struct k_work_delayable fota_work;
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
+/* Atomic flags */
+static atomic_val_t initial_ota_check = ATOMIC_INIT(0);
 
-/* Making the ota dat static */
-static struct pyrinas_cloud_ota_package ota_package;
+/* Statically track message id*/
+static uint16_t ota_sub_message_id = 0;
+#endif
 
 /* Callback for application back to main context*/
 pryinas_cloud_application_cb_entry_t callbacks[CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT];
 
 /* Cloud state callbacks */
 static struct pyrinas_cloud_config m_config;
-
-/* Statically track message id*/
-static uint16_t ota_sub_message_id = 0;
-
-/* Stack definition for application workqueue */
-K_THREAD_STACK_DEFINE(cloud_stack_area,
-                      CONFIG_PYRINAS_CLOUD_WORKQUEUE_STACK_SIZE);
-static struct k_work_q cloud_work_q;
 
 /* Username and password */
 struct mqtt_utf8 mqtt_user_name, mqtt_password;
@@ -106,12 +88,16 @@ static char m_password[128] = {0};
 static char m_port[8] = {0};
 static char m_hostname[128] = {0};
 
-/* Forward declaration */
+/* Static message */
+struct pyrinas_cloud_evt message;
+
+/* Forward declarations */
 static int settings_read_callback(const char *key,
                                   size_t len,
                                   settings_read_cb read_cb,
                                   void *cb_arg,
                                   void *param);
+static void pyrinas_rx_process(struct pyrinas_cloud_evt *p_message);
 
 int pyrinas_cloud_subscribe(char *topic, pyrinas_cloud_application_cb_t callback)
 {
@@ -168,11 +154,8 @@ int pyrinas_cloud_unsubscribe(char *topic)
     return -ENOENT;
 }
 
-/**@brief Function to publish data on the configured topic
- */
-static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t data_len, uint16_t message_id)
+int pyrinas_cloud_publish_raw(uint8_t *topic, size_t topic_len, uint8_t *data, size_t data_len)
 {
-
     LOG_DBG("Pub to %.*s", topic_len, (char *)topic);
 
     if (atomic_get(&cloud_state_s) != cloud_state_connected)
@@ -188,11 +171,11 @@ static int data_publish(uint8_t *topic, size_t topic_len, uint8_t *data, size_t 
     param.message.topic.topic.size = topic_len;
     param.message.payload.data = data;
     param.message.payload.len = data_len;
-    param.message_id = message_id;
+    param.message_id = message_id++;
     param.dup_flag = 0;
     param.retain_flag = 0;
 
-    LOG_INF("Publishing %d bytes to topic: %.*s", data_len, topic_len, (char *)topic);
+    LOG_DBG("Publishing %d bytes to topic: %.*s", data_len, topic_len, (char *)topic);
 
     int err = mqtt_publish(&client, &param);
 
@@ -210,7 +193,7 @@ static int unsubscribe(char *topic, size_t len)
     const struct mqtt_subscription_list subscription_list = {
     .list = &subscribe_topic, .list_count = 1, .message_id = message_id++};
 
-    printk("Unsubscribing to: %s len %u\n", topic, len);
+    LOG_ERR("Unsubscribing to: %s len %u", topic, len);
 
     return mqtt_unsubscribe(&client, &subscription_list);
 }
@@ -228,7 +211,7 @@ static int subscribe(char *topic, size_t len, uint16_t message_id)
     const struct mqtt_subscription_list subscription_list = {
         .list = &subscribe_topic, .list_count = 1, .message_id = message_id};
 
-    LOG_INF("Subscribing to topic: %s", (char *)topic);
+    LOG_DBG("Subscribing to topic: %s", (char *)topic);
 
     return mqtt_subscribe(&client, &subscription_list);
 }
@@ -263,44 +246,9 @@ static int publish_get_payload(struct mqtt_client *c,
     return 0;
 }
 
-static void publish_ota_check()
-{
-
-    char buf[10];
-    size_t size = 0;
-
-    /* Encode the request */
-    encode_ota_request(ota_cmd_type_check, buf, sizeof(buf), &size);
-
-    /* Publish the data */
-    int err = data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, message_id++);
-    if (err)
-    {
-        LOG_ERR("Unable to publish OTA check. Error: %d", err);
-    }
-}
-
-static void publish_ota_done()
-{
-
-    char buf[10];
-    size_t size = 0;
-
-    /* Encode the request */
-    encode_ota_request(ota_cmd_type_done, buf, sizeof(buf), &size);
-
-    /* Publish the data */
-    int err = data_publish(ota_pub_topic, strlen(ota_pub_topic), buf, size, message_id++);
-    if (err)
-    {
-        LOG_ERR("Unable to publish OTA done. Error: %d", err);
-    }
-}
-
 /* Publish central/hub telemetry */
 int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *p_telemetry_data)
 {
-
     int err;
     size_t data_size = 0;
     char data[CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_SIZE] = {0};
@@ -314,10 +262,10 @@ int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *p_telem
     }
 
     /* Publish it */
-    return data_publish(telemetry_pub_topic, strlen(telemetry_pub_topic), data, data_size, message_id++);
+    return pyrinas_cloud_publish_raw(telemetry_pub_topic, strlen(telemetry_pub_topic), data, data_size);
 }
 
-static void on_connect_fn(struct k_work *unused)
+int pyrinas_cloud_on_connect()
 {
     LOG_DBG("[%s:%d] on connect work function!", __func__, __LINE__);
 
@@ -334,214 +282,27 @@ static void on_connect_fn(struct k_work *unused)
     if (err)
     {
         LOG_ERR("Error publishing telemetry: %i", err);
+        return err;
     }
 
-    /* Trigger OTA check */
-    if (atomic_get(&ota_state_s) == ota_state_ready)
-    {
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
+    /* Save this for later */
+    ota_sub_message_id = (uint16_t)message_id++;
 
-        /* Save this for later */
-        ota_sub_message_id = (uint16_t)message_id++;
+    /* Subscribe to OTA topic */
+    subscribe(ota_sub_topic, strlen(ota_sub_topic), ota_sub_message_id);
+    subscribe(ota_download_sub_topic, strlen(ota_download_sub_topic), message_id++);
 
-        /* Subscribe to OTA topic */
-        subscribe(ota_sub_topic, strlen(ota_sub_topic), ota_sub_message_id);
-    }
-}
-
-static void ota_check_subscribed_work_fn(struct k_work *unused)
-{
-
-    /* Check if, after a certain amount of time, no response has been had. If no, assert and reboot*/
-    __ASSERT(atomic_get(&initial_ota_check) == 1, "No response from server!");
-}
-
-static void fota_start_fn(struct k_work *unused)
-{
-    ARG_UNUSED(unused);
-
-#ifdef CONFIG_FOTA_DOWNLOAD
-
-    /* Start the FOTA process */
-    int err;
-    int sec_tag = -1;
-
-    /* Set the security tag if TLS is enabled. */
-#if defined(CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG)
-    sec_tag = CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG;
 #endif
+    /* Subscribe to Application topic */
+    subscribe(application_sub_topic, strlen(application_sub_topic), message_id++);
 
-    int index = -1;
-
-    /* Make sure we're using the correct image*/
-    for (int i = 0; i < PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT; i++)
-    {
-        // Set the index
-        if (ota_package.files[i].image_type == pyrinas_cloud_ota_image_type_primary)
-        {
-            index = i;
-            break;
-        }
-    }
-
-    /* If a primary image is not found error! */
-    if (index == -1)
-    {
-        /* Send to calback */
-        if (m_config.evt_cb)
-        {
-            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_ERROR,
-                                            .data.err = -ENOTSUP};
-            m_config.evt_cb(&evt);
-        }
-
-        return;
-    }
-
-    LOG_DBG("%s/%s using tag %d", (char *)ota_package.files[index].host, (char *)ota_package.files[index].file, sec_tag);
-
-    /* Start download uses default port and APN*/
-    err = fota_download_start(ota_package.files[index].host, ota_package.files[index].file, sec_tag, 0, 0);
-    if (err)
-    {
-        LOG_ERR("fota_download_start error %d", err);
-        atomic_set(&ota_state_s, ota_state_error);
-
-        /* Send to calback */
-        if (m_config.evt_cb)
-        {
-            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_ERROR,
-                                            .data.err = err};
-            m_config.evt_cb(&evt);
-        }
-
-        return;
-    }
-
-    /* Set that we're busy now */
-    atomic_set(&ota_state_s, ota_state_downloading);
-
-    /* Send to calback */
-    if (m_config.evt_cb)
-    {
-        struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_DOWNLOADING};
-        m_config.evt_cb(&evt);
-    }
-#endif
-}
-
-static void publish_sort(struct pyrinas_cloud_evt *message)
-{
-
-    int result = 0;
-
-    /* If its the OTA sub topic process */
-    if (strncmp(ota_sub_topic, message->data.msg.topic, message->data.msg.topic_len) == 0)
-    {
-        LOG_DBG("Found %s. Data: %s Data size: %d", (char *)ota_sub_topic, (char *)message->data.msg.data, message->data.msg.data_len);
-
-        /* Set check flag */
-        atomic_set(&initial_ota_check, 1);
-
-        /* Reset ota_package conents */
-        memset(&ota_package, 0, sizeof(ota_package));
-
-        /* Parse OTA event */
-        int err = decode_ota_package(&ota_package, message->data.msg.data, message->data.msg.data_len);
-
-        /* If error then no update available */
-        if (err == 0)
-        {
-
-            /* Check numeric */
-            result = ver_comp(&pyrinas_version, &ota_package.version);
-
-            /* Print result */
-            LOG_INF("ota: New version? %s ", result == 1 ? "true" : "false");
-            LOG_INF("ota: Remote version: %i.%i.%i-%i ", ota_package.version.major, ota_package.version.minor, ota_package.version.patch, ota_package.version.commit);
-        }
-        else
-        {
-            LOG_WRN("ota: Unable to decode OTA data");
-        }
-
-        /* If incoming is greater or hash is not equal */
-        if (result == 1)
-        {
-
-            LOG_INF("ota: Start upgrade");
-
-            /* Set OTA State */
-            atomic_set(&ota_state_s, ota_state_started);
-
-            /* Send to calback */
-            if (m_config.evt_cb)
-            {
-                struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_START};
-                m_config.evt_cb(&evt);
-            }
-
-            /* Start upgrade here*/
-            k_work_schedule_for_queue(&cloud_work_q, &fota_work, K_SECONDS(5));
-        }
-        else
-        {
-
-            LOG_INF("ota: No update.");
-
-            /* If there wasn't an issue with OTA, continue on our merry way*/
-            if (atomic_get(&ota_state_s) == ota_state_ready)
-            {
-                LOG_INF("ota: Ota ready.");
-
-                /* Let the backend know we're done */
-                k_work_submit_to_queue(&cloud_work_q, &ota_done_work);
-
-                /* Subscribe to Application topic */
-                subscribe(application_sub_topic, strlen(application_sub_topic), message_id++);
-
-                /* Send to calback */
-                if (m_config.evt_cb)
-                {
-                    struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_READY};
-                    m_config.evt_cb(&evt);
-                }
-            }
-        }
-
-        return;
-    }
-
-    for (int i = 0; i < CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT; i++)
-    {
-        /* Continue if null */
-        if (callbacks[i].cb == NULL)
-            continue;
-
-        LOG_DBG("%s %d", (char *)message->data.msg.data, message->data.msg.topic_len);
-
-        /* Determine if this is the topic*/
-        if (strncmp(callbacks[i].full_topic, message->data.msg.topic, message->data.msg.topic_len) == 0)
-        {
-            LOG_DBG("Found %s", (char *)callbacks[i].topic);
-
-            /* Callbacks to app context */
-            callbacks[i].cb(callbacks[i].topic, callbacks[i].topic_len, message->data.msg.data, message->data.msg.data_len);
-
-            /* Found it,lets break */
-            break;
-        }
-    }
-
-    /* Send to calback */
-    if (m_config.evt_cb)
-    {
-        m_config.evt_cb(message);
-    }
+    return 0;
 }
 
 /**@brief MQTT client event handler
  */
-void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
+void mqtt_evt_handler(struct mqtt_client *const client, const struct mqtt_evt *evt)
 {
     int err;
 
@@ -562,18 +323,12 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         /* Connected */
         atomic_set(&cloud_state_s, cloud_state_connected);
 
-        /* Set OTA State back to Ready state */
-        atomic_set(&ota_state_s, ota_state_ready);
-
         /* Send to calback */
         if (m_config.evt_cb)
         {
             struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_CONNECTED};
             m_config.evt_cb(&evt);
         }
-
-        /* On connect work */
-        k_work_submit_to_queue(&cloud_work_q, &on_connect_work);
 
         break;
     }
@@ -585,8 +340,10 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         /* Set state */
         atomic_set(&cloud_state_s, cloud_state_disconnected);
 
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
         /* Clear check flag */
         atomic_set(&initial_ota_check, 0);
+#endif
 
         /* Send to calback */
         if (m_config.evt_cb)
@@ -609,51 +366,34 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
             break;
         }
 
-        struct pyrinas_cloud_evt message = {
-            .type = PYRINAS_CLOUD_EVT_DATA_RECIEVED,
-            .data = {
-                .msg = {
-                    .data_len = p->message.payload.len,
-                    .topic_len = p->message.topic.topic.size}}};
+        message.type = PYRINAS_CLOUD_EVT_DATA_RECEIVED;
+        message.data.data_len = p->message.payload.len;
+        message.data.topic_len = p->message.topic.topic.size;
 
         /* Copy topic */
-        memcpy(message.data.msg.topic, p->message.topic.topic.utf8, p->message.topic.topic.size);
+        memcpy(message.data.topic, p->message.topic.topic.utf8, p->message.topic.topic.size);
 
         LOG_DBG("[%s:%d] MQTT PUBLISH result=%d topic=%s len=%d", __func__,
                 __LINE__, evt->result, p->message.topic.topic.utf8, p->message.payload.len);
 
-        err = publish_get_payload(c, message.data.msg.data, p->message.payload.len);
-        if (err >= 0)
+        err = publish_get_payload(client, message.data.data, message.data.data_len);
+        if (err)
         {
-
-            /* Sor and push message via callback  */
-            publish_sort(&message);
+            LOG_ERR("mqtt_read_publish_payload: Failed! %d", err);
         }
         else
         {
-            printk("mqtt_read_publish_payload: Failed! %d\n", err);
-            printk("Disconnecting MQTT client...\n");
-
-            err = mqtt_disconnect(c);
-            if (err)
-            {
-                printk("Could not disconnect: %d\n", err);
-            }
+            /* Sort and push message via callback  */
+            pyrinas_rx_process(&message);
         }
 
         /* Need to ACK recieved data... */
         if (p->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE)
         {
-
-            const struct mqtt_puback_param ack = {
+            struct mqtt_puback_param puback = {
                 .message_id = p->message_id};
 
-            /* Send acknowledgment. */
-            err = mqtt_publish_qos1_ack(c, &ack);
-            if (err)
-            {
-                printk("unable to ack\n");
-            }
+            mqtt_publish_qos1_ack(client, &puback);
         }
 
         break;
@@ -675,15 +415,18 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
         LOG_DBG("[%s:%d] SUBACK packet id: %u", __func__, __LINE__,
                 evt->param.suback.message_id);
 
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
         /* If we're subscribed, publish the request */
         if (ota_sub_message_id == evt->param.suback.message_id && atomic_get(&initial_ota_check) == 0)
         {
-            /* Submit work */
-            k_work_submit_to_queue(&cloud_work_q, &ota_request_work);
-
-            /* Delay work to make sure we are *at least* subscribed to OTA*/
-            k_work_schedule_for_queue(&cloud_work_q, &ota_check_subscribed_work, K_SECONDS(5));
+            /* Send to calback */
+            if (m_config.evt_cb)
+            {
+                struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_READY};
+                m_config.evt_cb(&evt);
+            }
         }
+#endif
 
         break;
 
@@ -738,10 +481,10 @@ static int broker_init(char *hostname, uint16_t port)
         }
         else
         {
-            printk("ai_addrlen = %u should be %u or %u\n",
-                   (unsigned int)addr->ai_addrlen,
-                   (unsigned int)sizeof(struct sockaddr_in),
-                   (unsigned int)sizeof(struct sockaddr_in6));
+            LOG_ERR("ai_addrlen = %u should be %u or %u",
+                    (unsigned int)addr->ai_addrlen,
+                    (unsigned int)sizeof(struct sockaddr_in),
+                    (unsigned int)sizeof(struct sockaddr_in6));
         }
 
         addr = addr->ai_next;
@@ -754,38 +497,12 @@ static int broker_init(char *hostname, uint16_t port)
     return 0;
 }
 
-static void ota_request_work_fn(struct k_work *unused)
-{
-    publish_ota_check();
-}
-
-static void ota_done_work_fn(struct k_work *unused)
-{
-    /* Publish OTA done */
-    publish_ota_done();
-}
-
-static void work_init()
-{
-
-    k_work_queue_start(&cloud_work_q, cloud_stack_area,
-                       K_THREAD_STACK_SIZEOF(cloud_stack_area),
-                       CONFIG_PYRINAS_CLOUD_WORKQUEUE_PRIORITY, NULL);
-
-    k_work_init_delayable(&fota_work, fota_start_fn);
-    k_work_init_delayable(&ota_check_subscribed_work, ota_check_subscribed_work_fn);
-    k_work_init(&on_connect_work, on_connect_fn);
-    k_work_init(&ota_request_work, ota_request_work_fn);
-    k_work_init(&ota_done_work, ota_done_work_fn);
-}
-
 static int settings_read_callback(const char *key,
                                   size_t len,
                                   settings_read_cb read_cb,
                                   void *cb_arg,
                                   void *param)
 {
-
     ssize_t num_read_bytes = 0;
     struct pyrinas_cloud_settings_params *params = param;
 
@@ -817,7 +534,6 @@ static int settings_read_callback(const char *key,
  */
 static int client_init(struct pyrinas_cloud_client_init *init, struct mqtt_client *client, char *p_client_id, size_t client_id_sz)
 {
-
     int err;
 
     mqtt_client_init(client);
@@ -879,54 +595,8 @@ static int client_init(struct pyrinas_cloud_client_init *init, struct mqtt_clien
     return 0;
 }
 
-#ifdef CONFIG_FOTA_DOWNLOAD
-static void fota_evt(const struct fota_download_evt *p_evt)
-{
-
-    switch (p_evt->id)
-    {
-    case FOTA_DOWNLOAD_EVT_ERROR:
-        LOG_INF("Received error from fota_download");
-
-        /* Set the state */
-        atomic_set(&ota_state_s, ota_state_error);
-
-        /* Send to calback */
-        if (m_config.evt_cb)
-        {
-            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_ERROR,
-                                            .data.err = (int)p_evt->cause};
-            m_config.evt_cb(&evt);
-        }
-
-        /* Disconnect */
-        pyrinas_cloud_disconnect();
-
-        break;
-    case FOTA_DOWNLOAD_EVT_FINISHED:
-        LOG_INF("OTA Done.");
-
-        /* Set the state */
-        atomic_set(&ota_state_s, ota_state_done);
-
-        /* Send to calback */
-        if (m_config.evt_cb)
-        {
-            struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_FOTA_DONE};
-            m_config.evt_cb(&evt);
-        }
-
-        break;
-
-    default:
-        break;
-    }
-}
-#endif
-
 int pyrinas_cloud_connect()
 {
-
     /* Check if thread is already active. */
     if (atomic_get(&connection_poll_active))
     {
@@ -1014,9 +684,6 @@ static int tls_init(void)
         if (err)
             LOG_WRN("Unable to load.");
     }
-
-    /* Get HTTPS cert */
-    load_credential(CONFIG_PYRINAS_CLOUD_HTTPS_SEC_TAG, TLS_CREDENTIAL_CA_CERTIFICATE, https_credential, sizeof(https_credential));
 
     return 0;
 }
@@ -1138,27 +805,33 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
     init.hostname = CONFIG_PYRINAS_CLOUD_MQTT_BROKER_HOSTNAME;
 #endif
 
-    /* For debug purposes */
-    LOG_INF("Connecting to: %s on port %d", init.hostname, init.port);
-
     /*Set the callback*/
     m_config = *p_config;
 
-/* Init FOTA client */
-#ifdef CONFIG_FOTA_DOWNLOAD
-    err = fota_download_init(fota_evt);
+    LOG_DBG("Topics");
+
+/* Set up topics */
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
+    err = pyrinas_cloud_ota_init(p_config);
     if (err)
-        LOG_WRN("Unable to init FOTA client. Err: %i", err);
+    {
+        LOG_ERR("Error init OTA. Err: %i", err);
+        return err;
+    }
+
+    snprintf(ota_sub_topic, sizeof(ota_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_TOPIC, p_config->client_id.len, p_config->client_id.str, 's');
+    snprintf(ota_download_sub_topic, sizeof(ota_download_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_DOWNLOAD_TOPIC, p_config->client_id.len, p_config->client_id.str);
+    LOG_DBG("%s %i %i", (char *)ota_sub_topic, strlen(ota_sub_topic), sizeof(ota_sub_topic));
+    LOG_DBG("%s %i %i", (char *)ota_download_sub_topic, strlen(ota_download_sub_topic), sizeof(ota_download_sub_topic));
 #endif
 
-    /* Set up topics */
-    snprintf(ota_pub_topic, sizeof(ota_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_PUB_TOPIC, p_config->client_id.len, p_config->client_id.str);
-    snprintf(ota_sub_topic, sizeof(ota_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_OTA_SUB_TOPIC, p_config->client_id.len, p_config->client_id.str);
     snprintf(telemetry_pub_topic, sizeof(telemetry_pub_topic), CONFIG_PYRINAS_CLOUD_MQTT_TELEMETRY_PUB_TOPIC, p_config->client_id.len, p_config->client_id.str);
     snprintf(application_sub_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, p_config->client_id.len, p_config->client_id.str, 1, "+");
+    LOG_DBG("%s %i %i", (char *)telemetry_pub_topic, strlen(telemetry_pub_topic), sizeof(telemetry_pub_topic));
+    LOG_DBG("%s %i %i", (char *)application_sub_topic, strlen(application_sub_topic), sizeof(application_sub_topic));
 
-    /* Initialize workers */
-    work_init();
+    /* For debug purposes */
+    LOG_INF("Connecting to: %s on port %d", init.hostname, init.port);
 
     /* MQTT client create */
     err = client_init(&init, &client, p_config->client_id.str, p_config->client_id.len);
@@ -1170,7 +843,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
         if (m_config.evt_cb)
         {
             struct pyrinas_cloud_evt evt = {.type = PYRINAS_CLOUD_EVT_ERROR,
-                                            .data.err = err};
+                                            .err = err};
             m_config.evt_cb(&evt);
         }
 
@@ -1184,7 +857,6 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 
 int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
 {
-
     char uid[14];
     int err = 0;
 
@@ -1251,12 +923,11 @@ int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt)
     }
 
     /* Publish it */
-    return data_publish(topic, ret, data, data_len, message_id++);
+    return pyrinas_cloud_publish_raw(topic, ret, data, data_len);
 }
 
 int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
 {
-
     char uid[14];
     char topic[CONFIG_PYRINAS_CLOUD_MQTT_TOPIC_SIZE] = {0};
     int ret;
@@ -1288,7 +959,7 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt)
     }
 
     /* Publish it */
-    return data_publish(topic, ret, evt->data.bytes, evt->data.size, message_id++);
+    return pyrinas_cloud_publish_raw(topic, ret, evt->data.bytes, evt->data.size);
 }
 
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
@@ -1309,9 +980,76 @@ int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len)
     }
 
     /* Publish it */
-    data_publish(topic, ret, data, len, message_id++);
+    pyrinas_cloud_publish_raw(topic, ret, data, len);
 
     return 0;
+}
+
+static void pyrinas_rx_process(struct pyrinas_cloud_evt *p_message)
+{
+
+#if CONFIG_PYRINAS_CLOUD_OTA_ENABLED
+    int err = 0;
+
+    /* If its the OTA sub topic process */
+    if (strncmp(ota_sub_topic, p_message->data.topic, p_message->data.topic_len) == 0)
+    {
+        LOG_DBG("Found %s. Data size: %d", (char *)ota_sub_topic, p_message->data.data_len);
+
+        /* Set check flag */
+        atomic_set(&initial_ota_check, 1);
+
+        /* Set package*/
+        err = pyrinas_cloud_ota_set_package(p_message->data.data, p_message->data.data_len);
+        if (err)
+        {
+            LOG_ERR("Error decoding and setting package. Err: %i", err);
+        }
+
+        return;
+    }
+    else if (strncmp(ota_download_sub_topic, p_message->data.topic, p_message->data.topic_len) == 0)
+    {
+        int err = 0;
+
+        LOG_INF("ota %i bytes received", p_message->data.data_len);
+
+        err = pyrinas_cloud_ota_set_next(p_message->data.data, p_message->data.data_len);
+        if (err)
+        {
+            LOG_ERR("Error decoding and setting next. Err: %i", err);
+        }
+
+        return;
+    }
+#endif
+
+    for (int i = 0; i < CONFIG_PYRINAS_CLOUD_APPLICATION_CALLBACK_MAX_COUNT; i++)
+    {
+        /* Continue if null */
+        if (callbacks[i].cb == NULL)
+            continue;
+
+        LOG_DBG("%s %d", (char *)p_message->data.data, p_message->data.topic_len);
+
+        /* Determine if this is the topic*/
+        if (strncmp(callbacks[i].full_topic, p_message->data.topic, p_message->data.topic_len) == 0)
+        {
+            LOG_DBG("Found %s", (char *)callbacks[i].topic);
+
+            /* Callbacks to app context */
+            callbacks[i].cb(callbacks[i].topic, callbacks[i].topic_len, p_message->data.data, p_message->data.data_len);
+
+            /* Found it,lets break */
+            break;
+        }
+    }
+
+    /* Send to calback */
+    if (m_config.evt_cb)
+    {
+        m_config.evt_cb(p_message);
+    }
 }
 
 void pyrinas_cloud_poll(void)
@@ -1433,7 +1171,11 @@ reset:
     goto start;
 }
 
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
+#define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(8)
+#else
 #define PYRINAS_CLOUD_THREAD_STACK_SIZE KB(4)
+#endif
 K_THREAD_DEFINE(pyrinas_cloud_thread, PYRINAS_CLOUD_THREAD_STACK_SIZE,
                 pyrinas_cloud_poll, NULL, NULL, NULL,
                 K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);

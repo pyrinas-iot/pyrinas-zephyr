@@ -44,14 +44,16 @@ enum pyrinas_cloud_ota_cmd_type
 {
   ota_cmd_type_check,
   ota_cmd_type_done,
+  ota_cmd_type_download_bytes,
 };
 
-/* Used to determine which OTA verison to use */
-enum pyrinas_cloud_ota_request_version
+/** @brief Used for facilitating OTA updates */
+struct pyrinas_cloud_ota_request
 {
-  ota_request_version_unknown = 0,
-  ota_request_version_v1,
-  ota_request_version_v2,
+  enum pyrinas_cloud_ota_cmd_type type;
+  char id[PYRINAS_OTA_PACKAGE_MAX_FILE_PATH_CHARS];
+  uint32_t start_pos;
+  uint32_t end_pos;
 };
 
 /* Event type */
@@ -62,12 +64,15 @@ enum pyrinas_cloud_evt_type
   PYRINAS_CLOUD_EVT_READY,
   PYRINAS_CLOUD_EVT_ERROR,
   PYRINAS_CLOUD_EVT_DISCONNECTED,
-  PYRINAS_CLOUD_EVT_DATA_RECIEVED,
+  PYRINAS_CLOUD_EVT_DATA_RECEIVED,
+#ifdef CONFIG_PYRINAS_CLOUD_OTA_ENABLED
+  PYRINAS_CLOUD_EVT_FOTA_READY,
   PYRINAS_CLOUD_EVT_FOTA_START,
-  PYRINAS_CLOUD_EVT_FOTA_DOWNLOADING,
+  PYRINAS_CLOUD_EVT_FOTA_NEXT,
   PYRINAS_CLOUD_EVT_FOTA_DONE,
   PYRINAS_CLOUD_EVT_FOTA_REBOOTING,
   PYRINAS_CLOUD_EVT_FOTA_ERROR,
+#endif
 };
 
 struct pyrinas_cloud_evt_data
@@ -85,8 +90,8 @@ struct pyrinas_cloud_evt
   union
   {
     int err;
-    struct pyrinas_cloud_evt_data msg;
-  } data;
+    struct pyrinas_cloud_evt_data data;
+  };
 };
 
 /* Used to track the state of OTA internally to pyrinas_cloud*/
@@ -140,25 +145,6 @@ struct pyrinas_cloud_settings_params
   size_t len;
 };
 
-enum pyrinas_cloud_ota_image_type
-{
-  pyrinas_cloud_ota_image_type_primary = (1 << 0),
-  pyrinas_cloud_ota_image_type_secondary = (1 << 1)
-};
-
-struct pyrinas_cloud_ota_file_info
-{
-  enum pyrinas_cloud_ota_image_type image_type;
-  char host[PYRINAS_OTA_PACKAGE_MAX_FILE_PATH_CHARS];
-  char file[PYRINAS_OTA_PACKAGE_MAX_FILE_PATH_CHARS];
-};
-
-struct pyrinas_cloud_ota_package
-{
-  union pyrinas_cloud_ota_version version;
-  struct pyrinas_cloud_ota_file_info files[PYRINAS_OTA_PACKAGE_MAX_FILE_COUNT];
-};
-
 /* Callbacks */
 typedef void (*pyrinas_cloud_evt_cb_t)(const struct pyrinas_cloud_evt *const p_evt);
 typedef void (*pyrinas_cloud_application_cb_t)(const uint8_t *topic, size_t topic_len, const uint8_t *data, size_t data_len);
@@ -199,6 +185,7 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config);
 
 /* Connects to Pyrinas*/
 int pyrinas_cloud_connect();
+int pyrinas_cloud_on_connect();
 
 /* Disconnects from Pyrinas */
 int pyrinas_cloud_disconnect();
@@ -224,13 +211,13 @@ int pyrinas_cloud_publish_evt(pyrinas_event_t *evt);
 /* Publish central event to the cloud */
 int pyrinas_cloud_publish(char *type, uint8_t *data, size_t len);
 
+/* Publish central event to the cloud */
+int pyrinas_cloud_publish_raw(uint8_t *topic, size_t topic_len, uint8_t *data, size_t data_len);
+
 /* Publish telemetry only */
 int pyrinas_cloud_publish_evt_telemetry(pyrinas_event_t *evt);
 
 /* Publish telemetry data */
 int pyrinas_cloud_publish_telemetry(struct pyrinas_cloud_telemetry_data *data);
-
-/* Used during polling process */
-void pyrinas_cloud_process();
 
 #endif /* _PYRINAS_CLOUD_H */

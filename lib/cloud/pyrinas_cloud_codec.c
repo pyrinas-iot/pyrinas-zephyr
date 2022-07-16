@@ -7,14 +7,13 @@
 #include <zephyr.h>
 #include <stdio.h>
 #include <pyrinas_cloud/pyrinas_cloud.h>
+#include <pyrinas_cloud/pyrinas_cloud_codec.h>
 #include <qcbor/qcbor_spiffy_decode.h>
-
-#include "pyrinas_cloud_codec.h"
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(pyrinas_cloud_codec);
 
-QCBORError encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t *p_buf, size_t data_len, size_t *payload_len)
+QCBORError encode_ota_request(struct pyrinas_cloud_ota_request *req, uint8_t *p_buf, size_t data_len, size_t *payload_len)
 {
 
     /* Setup of the goods */
@@ -26,10 +25,18 @@ QCBORError encode_ota_request(enum pyrinas_cloud_ota_cmd_type cmd_type, uint8_t 
 
     /* Create over-arching map */
     QCBOREncode_OpenMap(&ec);
-    QCBOREncode_AddUInt64ToMapN(&ec, 0, cmd_type);
+    QCBOREncode_AddUInt64ToMapN(&ec, ota_req_type_pos, req->type);
 
-    /* Since this is v2, let's request v2!*/
-    QCBOREncode_AddUInt64ToMapN(&ec, 1, ota_request_version_v2);
+    if (req->type == ota_cmd_type_download_bytes)
+    {
+        /* Image name */
+        QCBOREncode_AddSZStringToMapN(&ec, ota_req_id_pos, req->id);
+
+        /* Start and end */
+        QCBOREncode_AddUInt64ToMapN(&ec, ota_req_start_pos, req->start_pos);
+        QCBOREncode_AddUInt64ToMapN(&ec, ota_req_end_pos, req->end_pos);
+    }
+
     QCBOREncode_CloseMap(&ec);
 
     /* Finish and get size */
@@ -74,65 +81,17 @@ void decode_ota_version(union pyrinas_cloud_ota_version *p_version, QCBORDecodeC
     QCBORDecode_ExitMap(dc);
 }
 
-void decode_ota_file_info(struct pyrinas_cloud_ota_file_info *p_file_info, QCBORDecodeContext *dc)
+QCBORError decode_ota_download(struct pyrinas_cloud_ota_download *ota_download, const char *data, size_t data_len)
 {
-    QCBORError uErr;
-    uint64_t temp;
 
-    QCBORDecode_EnterMap(dc, NULL);
+    LOG_HEXDUMP_DBG(data, data_len, "ota download:");
 
-    //Get the image type
-    QCBORDecode_GetUInt64ConvertAllInMapN(dc, image_type_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
-    p_file_info->image_type = (uint8_t)temp;
-
-    // Check to make sure we have a map
-    uErr = QCBORDecode_GetError(dc);
-    if (uErr != QCBOR_SUCCESS)
-    {
-        LOG_ERR("image_type fail! err; %i ", uErr);
-        return;
-    }
-
-    /* Get the host */
-    UsefulBufC host_data;
-    QCBORDecode_GetTextStringInMapN(dc, host_pos, &host_data);
-    memcpy(p_file_info->host, host_data.ptr, host_data.len);
-
-    // Check to make sure we have a map
-    uErr = QCBORDecode_GetError(dc);
-    if (uErr != QCBOR_SUCCESS)
-    {
-        LOG_ERR("host decode fail!");
-        return;
-    }
-
-    /* Get the file */
-    UsefulBufC file_data;
-    QCBORDecode_GetTextStringInMapN(dc, file_pos, &file_data);
-    memcpy(p_file_info->file, file_data.ptr, file_data.len);
-
-    // Check to make sure we have a map
-    uErr = QCBORDecode_GetError(dc);
-    if (uErr != QCBOR_SUCCESS)
-    {
-        LOG_ERR("file decode fail!");
-        return;
-    }
-
-    LOG_DBG("TYPE: %d URL: %s/%s", p_file_info->image_type, p_file_info->host, p_file_info->file);
-
-    QCBORDecode_ExitMap(dc);
-}
-
-QCBORError decode_ota_package(struct pyrinas_cloud_ota_package *ota_package, const char *data, size_t data_len)
-{
     /* Setup of the goods */
     QCBORError uErr;
     UsefulBufC buf = {
         .ptr = data,
         .len = data_len};
     QCBORDecodeContext dc;
-    QCBORItem item;
     QCBORDecode_Init(&dc, buf, QCBOR_DECODE_MODE_NORMAL);
     QCBORDecode_EnterMap(&dc, NULL);
 
@@ -143,8 +102,9 @@ QCBORError decode_ota_package(struct pyrinas_cloud_ota_package *ota_package, con
         goto Done;
     }
 
-    /* Get the ota version struct */
-    decode_ota_version(&ota_package->version, &dc, version_pos);
+    uint64_t temp;
+    QCBORDecode_GetUInt64ConvertAllInMapN(&dc, ota_download_position_start_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    ota_download->start_pos = (uint32_t)temp;
 
     // Check to make sure we have a map
     uErr = QCBORDecode_GetError(&dc);
@@ -153,19 +113,101 @@ QCBORError decode_ota_package(struct pyrinas_cloud_ota_package *ota_package, con
         goto Done;
     }
 
-    /* Get array size */
-    QCBORDecode_PeekNext(&dc, &item);
+    QCBORDecode_GetUInt64ConvertAllInMapN(&dc, ota_download_position_end_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    ota_download->end_pos = (uint32_t)temp;
 
-    if (item.uDataType == QCBOR_TYPE_ARRAY)
-
+    // Check error
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
     {
-        /* Get the hash from array */
-        QCBORDecode_EnterArrayFromMapN(&dc, file_info_pos);
-        for (uint8_t i = 0; i < item.val.uCount; i++)
-        {
-            decode_ota_file_info(&ota_package->files[i], &dc);
-        }
-        QCBORDecode_ExitArray(&dc);
+        goto Done;
+    }
+
+    /* Get the file */
+    UsefulBufC data_buf;
+    QCBORDecode_GetByteStringInMapN(&dc, ota_download_position_data_pos, &data_buf);
+
+    // Check error
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
+
+    /* Copy if no error*/
+    memcpy(ota_download->data, data_buf.ptr, MIN(data_buf.len, sizeof(ota_download->data)));
+
+    QCBORDecode_GetUInt64ConvertAllInMapN(&dc, ota_download_position_len_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    ota_download->len = (uint32_t)temp;
+
+    // Check error
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
+
+    /* Exit main map and return*/
+    QCBORDecode_ExitMap(&dc);
+
+Done:
+
+    return QCBORDecode_Finish(&dc);
+}
+
+QCBORError decode_ota_package(struct pyrinas_cloud_ota_package *ota_package, const char *data, size_t data_len)
+{
+    LOG_HEXDUMP_DBG(data, data_len, "ota package:");
+
+    /* Setup of the goods */
+    QCBORError uErr;
+    UsefulBufC buf = {
+        .ptr = data,
+        .len = data_len};
+    QCBORDecodeContext dc;
+    QCBORDecode_Init(&dc, buf, QCBOR_DECODE_MODE_NORMAL);
+    QCBORDecode_EnterMap(&dc, NULL);
+
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
+
+    /* Get the host */
+    UsefulBufC id_data;
+    QCBORDecode_GetTextStringInMapN(&dc, pyrinas_cloud_ota_package_id_pos, &id_data);
+
+    /* Make sure we had the ID */
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
+
+    /*Copy if no error*/
+    memcpy(ota_package->id, id_data.ptr, MIN(id_data.len, sizeof(ota_package->id)));
+
+    /* Get the ota version struct */
+    decode_ota_version(&ota_package->version, &dc, pyrinas_cloud_ota_package_version_pos);
+
+    // Check to make sure we have a map
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
+    }
+
+    uint64_t temp;
+    QCBORDecode_GetUInt64ConvertAllInMapN(&dc, pyrinas_cloud_ota_package_size_pos, QCBOR_CONVERT_TYPE_XINT64, &temp);
+    ota_package->size = (size_t)temp;
+
+    // Check error
+    uErr = QCBORDecode_GetError(&dc);
+    if (uErr != QCBOR_SUCCESS)
+    {
+        goto Done;
     }
 
     /* Exit main map and return*/
