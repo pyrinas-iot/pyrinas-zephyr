@@ -14,7 +14,6 @@
 #include <bluetooth/uuid.h>
 #include <bluetooth/gatt.h>
 
-#include <ble/services/pyrinas_client.h>
 #include <ble/services/pyrinas.h>
 #include <ble/ble_central.h>
 
@@ -31,11 +30,14 @@ struct ble_c_connection
     char __aligned(4) q_buf[BLE_CENTRAL_QUEUE_SIZE * sizeof(struct ble_fifo_data)];
     struct ble_fifo_data current_payload;
 
-    /* Pyrinas Client */
-    struct bt_pyrinas_client pyrinas_client;
+    /* Per connection */
+    struct bt_conn *conn;
+    uint16_t data_handle;
+    uint16_t ccc_handle;
 
     /* Discover params*/
     struct bt_gatt_discover_params discover_params;
+    struct bt_gatt_subscribe_params notif_params;
 };
 
 /* Used to track connection */
@@ -78,26 +80,18 @@ static void bt_send_work_handler(struct k_work *work)
     {
 
         // Check for invalid connection
-        if (m_conns[i].pyrinas_client.conn == NULL ||
+        if (m_conns[i].conn == NULL ||
             k_msgq_num_used_get(&m_conns[i].q) == 0)
         {
             continue;
         }
 
         struct bt_conn_info info = {0};
-        bt_conn_get_info(m_conns[i].pyrinas_client.conn, &info);
+        bt_conn_get_info(m_conns[i].conn, &info);
         if (info.state != BT_CONN_STATE_CONNECTED)
         {
             LOG_WRN("Not connected!");
-            bt_conn_disconnect(m_conns[i].pyrinas_client.conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-            break;
-        }
-
-        /* Check if busy */
-        if (bt_pyrinas_client_is_busy(&m_conns[i].pyrinas_client))
-        {
-            LOG_WRN("Failed to send. Pyrinas Client %i busy.", i);
-            schedule_work = true;
+            bt_conn_disconnect(m_conns[i].conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
             break;
         }
 
@@ -113,19 +107,13 @@ static void bt_send_work_handler(struct k_work *work)
 
         // Send the data
         // ! This call is asyncronous. Need to call semaphore and then release once data is sent.
-        err = bt_pyrinas_client_send(&m_conns[i].pyrinas_client, m_conns[i].current_payload.data, m_conns[i].current_payload.len);
+        err = bt_gatt_write_without_response(m_conns[i].conn,
+                                             m_conns[i].data_handle, m_conns[i].current_payload.data,
+                                             m_conns[i].current_payload.len, false);
         if (err)
         {
-            if (err == -EALREADY)
-            {
-                LOG_DBG("Failed to send. Pyrinas Client busy.");
-            }
-            else
-            {
-                LOG_ERR("Failed to send data over BLE connection"
-                        "(err %d)",
-                        err);
-            }
+
+            LOG_ERR("Unable to write without rsp. Code: %i", err);
 
             /* Schedule work */
             schedule_work = true;
@@ -159,7 +147,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     {
 
         // Check to make sure there's at least one active connection
-        if (m_conns[i].pyrinas_client.conn != NULL)
+        if (m_conns[i].conn != NULL)
         {
             ready = true;
             break;
@@ -188,7 +176,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
         // Queue if ready
-        if (m_conns[i].pyrinas_client.conn != NULL)
+        if (m_conns[i].conn != NULL)
         {
             LOG_DBG("Queing to connection %d with %i", i, k_msgq_num_used_get(&m_conns[i].q));
 
@@ -197,12 +185,28 @@ void ble_central_write(const uint8_t *data, uint16_t len)
             if (err)
             {
                 LOG_ERR("Unable to add outgoing event to queue!");
+
+		/* Disconnect to fix? */
             }
         }
     }
 
     // Start the worker thread
     k_work_reschedule_for_queue(ble_work_q, &bt_send_work, K_NO_WAIT);
+}
+
+static uint8_t on_received(struct bt_conn *conn,
+                           struct bt_gatt_subscribe_params *params,
+                           const void *data, uint16_t len)
+{
+
+    // Sends the data forward if the callback is valid
+    if (data && m_evt_cb)
+    {
+        m_evt_cb(data, len);
+    }
+
+    return BT_GATT_ITER_CONTINUE;
 }
 
 static uint8_t discover_func(struct bt_conn *conn,
@@ -222,7 +226,7 @@ static uint8_t discover_func(struct bt_conn *conn,
 
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
-        if (m_conns[i].pyrinas_client.conn == conn)
+        if (m_conns[i].conn == conn)
         {
             conn_data = &m_conns[i];
             break;
@@ -254,7 +258,7 @@ static uint8_t discover_func(struct bt_conn *conn,
                           BT_UUID_PYRINAS_DATA))
     {
         /* Assign handle */
-        conn_data->pyrinas_client.handles.data = bt_gatt_attr_value_handle(attr);
+        conn_data->data_handle = bt_gatt_attr_value_handle(attr);
 
         conn_data->discover_params.uuid = ccc_uuid;
         conn_data->discover_params.start_handle = attr->handle + 2;
@@ -271,13 +275,19 @@ static uint8_t discover_func(struct bt_conn *conn,
     {
 
         /* Assign handle */
-        conn_data->pyrinas_client.handles.data_ccc = attr->handle;
+        conn_data->ccc_handle = attr->handle;
 
-        err = bt_pyrinas_subscribe(&conn_data->pyrinas_client);
-        if (err && err != -EALREADY)
+        conn_data->notif_params.notify = on_received;
+        conn_data->notif_params.value = BT_GATT_CCC_NOTIFY;
+        conn_data->notif_params.value_handle = conn_data->data_handle;
+        conn_data->notif_params.ccc_handle = conn_data->ccc_handle;
+        atomic_set_bit(conn_data->notif_params.flags,
+                       BT_GATT_SUBSCRIBE_FLAG_VOLATILE);
+
+        err = bt_gatt_subscribe(conn_data->conn, &conn_data->notif_params);
+        if (err)
         {
             LOG_ERR("Subscribe failed (err %d)", err);
-            bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         }
         else
         {
@@ -379,7 +389,7 @@ void ble_central_scan_start()
         LOG_INF("No devices to scan.");
         return;
     }
-    
+
     /* Stop first to confirm .. */
     bt_le_scan_stop();
 
@@ -404,17 +414,18 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     {
 
         /* Make sure the conn is the correct one */
-        if (m_conns[i].pyrinas_client.conn != conn)
+        if (m_conns[i].conn != conn)
         {
             continue;
         }
 
         /* unref and NULL */
-        bt_conn_unref(m_conns[i].pyrinas_client.conn);
-        m_conns[i].pyrinas_client.conn = NULL;
+        bt_conn_unref(m_conns[i].conn);
+        m_conns[i].conn = NULL;
 
         /* Reset client */
-        bt_pyrinas_client_reset(&m_conns[i].pyrinas_client);
+        m_conns[i].data_handle = 0;
+        m_conns[i].ccc_handle = 0;
 
         /* Purge data */
         k_msgq_purge(&m_conns[i].q);
@@ -445,14 +456,8 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
     {
         LOG_ERR("Failed to connect: %d", conn_err);
 
-        // Undo our connection
-        bt_conn_unref(conn);
-
-        /* Start scanning if we're < max connections */
-        if (atomic_get(&m_num_connected) < m_config.device_count)
-        {
-            k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
-        }
+	// Disconnect on failure
+        bt_conn_disconnect(conn, BT_HCI_ERR_INVALID_PARAM);
 
         return;
     }
@@ -463,9 +468,9 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
         // Set to an unused conn
-        if (m_conns[i].pyrinas_client.conn == NULL)
+        if (m_conns[i].conn == NULL)
         {
-            m_conns[i].pyrinas_client.conn = conn;
+            m_conns[i].conn = conn;
 
             /* Start discovery process */
             m_conns[i].discover_params.uuid = service_uuid;
@@ -474,7 +479,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
             m_conns[i].discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
             m_conns[i].discover_params.type = BT_GATT_DISCOVER_PRIMARY;
 
-            err = bt_gatt_discover(m_conns[i].pyrinas_client.conn, &m_conns[i].discover_params);
+            err = bt_gatt_discover(m_conns[i].conn, &m_conns[i].discover_params);
             if (err)
             {
                 LOG_ERR("Discover failed (err %d)", err);
@@ -515,37 +520,9 @@ static struct bt_conn_cb conn_callbacks = {
     .disconnected = disconnected,
     .security_changed = security_changed};
 
-static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
-{
-
-    // Sends the data forward if the callback is valid
-    if (m_evt_cb)
-    {
-        m_evt_cb(data, len);
-    }
-
-    return BT_GATT_ITER_CONTINUE;
-}
-
-struct bt_pyrinas_client_init_param pyrinas_client_init_obj = {
-    .cb = {
-        .received = ble_data_received,
-    }};
-
 void ble_central_ready(void)
 {
     LOG_INF("Bluetooth ready");
-
-    for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
-    {
-
-        int err = bt_pyrinas_client_init(&m_conns[i].pyrinas_client, &pyrinas_client_init_obj);
-        if (err)
-        {
-            LOG_ERR("Pyrinas Client initialization failed (err %d)", err);
-            return;
-        }
-    }
 }
 
 void ble_central_attach_handler(encoded_data_handler_t evt_cb)
@@ -576,7 +553,7 @@ int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init
     {
 
         /* Set conn to NULL*/
-        m_conns[i].pyrinas_client.conn = NULL;
+        m_conns[i].conn = NULL;
 
         // Init the msgq
         k_msgq_init(&m_conns[i].q, m_conns[i].q_buf, sizeof(struct ble_fifo_data), BLE_CENTRAL_QUEUE_SIZE);
@@ -619,9 +596,9 @@ void ble_central_set_whitelist(ble_central_config_t *config)
     /* Disconnect from all */
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
-        if (m_conns[i].pyrinas_client.conn != NULL)
+        if (m_conns[i].conn != NULL)
         {
-            bt_conn_disconnect(m_conns[i].pyrinas_client.conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+            bt_conn_disconnect(m_conns[i].conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         }
     }
 

@@ -15,5 +15,4 @@ endif()
 
 if (CONFIG_PYRINAS_CENTRAL_ENABLED)
 zephyr_library_sources(ble_central.c)
-zephyr_library_sources(services/pyrinas_client.c)
 endif()
