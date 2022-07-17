@@ -342,25 +342,3 @@ int pyrinas_cloud_ota_check()
 
 	return 0;
 }
-
-static int ota_done()
-{
-	char buf[10];
-	size_t size = 0;
-
-	struct pyrinas_cloud_ota_request req = {
-	    .type = ota_cmd_type_done};
-
-	/* Encode the request */
-	encode_ota_request(&req, buf, sizeof(buf), &size);
-
-	/* Publish the data */
-	int err = pyrinas_cloud_publish_raw(ota_pub_topic, strlen(ota_pub_topic), buf, size);
-	if (err)
-	{
-		LOG_ERR("Unable to publish OTA done. Error: %d", err);
-		return err;
-	}
-
-	return 0;
-}

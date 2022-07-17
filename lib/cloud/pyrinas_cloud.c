@@ -702,13 +702,8 @@ int pyrinas_cloud_init(struct pyrinas_cloud_config *p_config)
 #if CONFIG_SETTINGS
     struct pyrinas_cloud_settings_params params = {0};
 
-    /* Load settings first */
-    err = settings_load();
-    if (err)
-    {
-        LOG_ERR("Unable to load settings. Err: %i", err);
-        return err;
-    }
+    /* Load settings first (if not already) */
+    settings_load();
 
 #if defined(CONFIG_NET_NATIVE)
     /* Load TLS certs */
@@ -989,7 +984,6 @@ static void pyrinas_rx_process(struct pyrinas_cloud_evt *p_message)
 {
 
 #if CONFIG_PYRINAS_CLOUD_OTA_ENABLED
-    int err = 0;
 
     /* If its the OTA sub topic process */
     if (strncmp(ota_sub_topic, p_message->data.topic, p_message->data.topic_len) == 0)
@@ -1000,11 +994,7 @@ static void pyrinas_rx_process(struct pyrinas_cloud_evt *p_message)
         atomic_set(&initial_ota_check, 1);
 
         /* Set package*/
-        err = pyrinas_cloud_ota_set_package(p_message->data.data, p_message->data.data_len);
-        if (err)
-        {
-            LOG_ERR("Error decoding and setting package. Err: %i", err);
-        }
+        pyrinas_cloud_ota_set_package(p_message->data.data, p_message->data.data_len);
 
         return;
     }
@@ -1012,7 +1002,7 @@ static void pyrinas_rx_process(struct pyrinas_cloud_evt *p_message)
     {
         int err = 0;
 
-        LOG_INF("ota %i bytes received", p_message->data.data_len);
+        LOG_DBG("ota %i bytes received", p_message->data.data_len);
 
         err = pyrinas_cloud_ota_set_next(p_message->data.data, p_message->data.data_len);
         if (err)

@@ -56,10 +56,17 @@ static struct k_work_q *ble_work_q;
 
 /* Related work handler for rx ring buf*/
 static void bt_send_work_handler(struct k_work *work);
+static void bt_scan_work_handler(struct k_work *work);
 static struct k_work_delayable bt_send_work;
+static struct k_work_delayable bt_scan_work;
 
 /* Storing static config*/
 static ble_central_config_t m_config;
+
+static void bt_scan_work_handler(struct k_work *work)
+{
+    ble_central_scan_start();
+}
 
 static void bt_send_work_handler(struct k_work *work)
 {
@@ -279,7 +286,7 @@ static uint8_t discover_func(struct bt_conn *conn,
             /* Start scanning if we're < max connections */
             if (atomic_get(&m_num_connected) < m_config.device_count)
             {
-                ble_central_scan_start();
+                k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
             }
         }
 
@@ -314,7 +321,7 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
     int err;
 
     bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
-    LOG_DBG("Device found: %s (RSSI %d)", addr_str, rssi);
+    LOG_DBG("Device found: %s (RSSI %d)", (char *)addr_str, rssi);
 
     /* Check whitelist  */
     bool found = false;
@@ -351,7 +358,7 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
         /* Start scanning if we're < max connections */
         if (atomic_get(&m_num_connected) < m_config.device_count)
         {
-            ble_central_scan_start();
+            k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
         }
     }
 }
@@ -372,6 +379,9 @@ void ble_central_scan_start()
         LOG_INF("No devices to scan.");
         return;
     }
+    
+    /* Stop first to confirm .. */
+    bt_le_scan_stop();
 
     int err = bt_le_scan_start(BT_LE_SCAN_CODED_ACTIVE, device_found);
     if (err && err != -EALREADY)
@@ -379,8 +389,10 @@ void ble_central_scan_start()
         LOG_WRN("Scanning failed to start, err %d", err);
         return;
     }
-
-    LOG_INF("Scan start!");
+    else if (err == 0)
+    {
+        LOG_INF("Scan start!");
+    }
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -420,7 +432,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     /* Start scanning if we're < max connections */
     if (atomic_get(&m_num_connected) < m_config.device_count)
     {
-        ble_central_scan_start();
+        k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
     }
 }
 
@@ -439,7 +451,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
         /* Start scanning if we're < max connections */
         if (atomic_get(&m_num_connected) < m_config.device_count)
         {
-            ble_central_scan_start();
+            k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
         }
 
         return;
@@ -558,6 +570,7 @@ int ble_central_init(struct k_work_q *p_ble_work_q, ble_central_config_t *p_init
 
     /* Set up work */
     k_work_init_delayable(&bt_send_work, bt_send_work_handler);
+    k_work_init_delayable(&bt_scan_work, bt_scan_work_handler);
 
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)
     {
@@ -587,6 +600,13 @@ void ble_central_set_whitelist(ble_central_config_t *config)
 {
     int err;
 
+    /* Compare to see if there were changes */
+    if (memcmp(&m_config, config, sizeof(ble_central_config_t)) == 0)
+    {
+        LOG_INF("Same config. No changes necessary.");
+        return;
+    }
+
     atomic_set(&m_force_disconnect, 1);
 
     /* Stop scanning */
@@ -609,6 +629,8 @@ void ble_central_set_whitelist(ble_central_config_t *config)
     m_config = *config;
 
     LOG_INF("Device count: %d", m_config.device_count);
+
+    k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
 
     atomic_set(&m_force_disconnect, 0);
 }
