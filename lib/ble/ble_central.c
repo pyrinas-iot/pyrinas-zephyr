@@ -186,7 +186,6 @@ void ble_central_write(const uint8_t *data, uint16_t len)
             {
                 LOG_ERR("Unable to add outgoing event to queue!");
 
-		/* Disconnect to fix? */
             }
         }
     }
@@ -293,6 +292,8 @@ static uint8_t discover_func(struct bt_conn *conn,
         {
             atomic_inc(&m_num_connected);
 
+            LOG_INF("Subscribed!");
+
             /* Start scanning if we're < max connections */
             if (atomic_get(&m_num_connected) < m_config.device_count)
             {
@@ -347,12 +348,10 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
     if (!found)
         return;
 
-    if (bt_le_scan_stop())
-    {
-        return;
-    }
+    /* Stopping scan */
+    ble_central_scan_stop();
 
-    LOG_INF("Connecting to: %s (RSSI %d)", addr_str, rssi);
+    LOG_INF("Connecting to: %s (RSSI %d)", (char *)addr_str, rssi);
 
     /* Then connect */
     struct bt_conn_le_create_param *create_params =
@@ -360,7 +359,9 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
                                 BT_GAP_SCAN_FAST_INTERVAL,
                                 BT_GAP_SCAN_FAST_INTERVAL);
 
-    err = bt_conn_le_create(addr, create_params, BT_LE_CONN_PARAM_DEFAULT, &conn);
+    struct bt_le_conn_param *conn_param = BT_LE_CONN_PARAM(0xc, 0x14, 0, 400);
+
+    err = bt_conn_le_create(addr, create_params, conn_param, &conn);
     if (err)
     {
         LOG_ERR("Create conn to %s failed (%u)", addr_str, err);
@@ -391,9 +392,15 @@ void ble_central_scan_start()
     }
 
     /* Stop first to confirm .. */
-    bt_le_scan_stop();
+    ble_central_scan_stop();
 
-    int err = bt_le_scan_start(BT_LE_SCAN_CODED_ACTIVE, device_found);
+    /* Duplicates are ok */
+    struct bt_le_scan_param *param = BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_ACTIVE,
+                                                      BT_LE_SCAN_OPT_CODED,
+                                                      BT_GAP_SCAN_FAST_INTERVAL,
+                                                      BT_GAP_SCAN_FAST_WINDOW);
+
+    int err = bt_le_scan_start(param, device_found);
     if (err && err != -EALREADY)
     {
         LOG_WRN("Scanning failed to start, err %d", err);
@@ -456,8 +463,14 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
     {
         LOG_ERR("Failed to connect: %d", conn_err);
 
-	// Disconnect on failure
-        bt_conn_disconnect(conn, BT_HCI_ERR_INVALID_PARAM);
+        // Undo our connection
+        bt_conn_unref(conn);
+
+        /* Start scanning if we're < max connections */
+        if (atomic_get(&m_num_connected) < m_config.device_count)
+        {
+            k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
+        }
 
         return;
     }
@@ -575,7 +588,6 @@ int ble_central_is_connected()
 
 void ble_central_set_whitelist(ble_central_config_t *config)
 {
-    int err;
 
     /* Compare to see if there were changes */
     if (memcmp(&m_config, config, sizeof(ble_central_config_t)) == 0)
@@ -587,11 +599,7 @@ void ble_central_set_whitelist(ble_central_config_t *config)
     atomic_set(&m_force_disconnect, 1);
 
     /* Stop scanning */
-    err = bt_le_scan_stop();
-    if (err && (err != -EALREADY))
-    {
-        LOG_ERR("Stop LE scan failed (err %d)", err);
-    }
+    ble_central_scan_stop();
 
     /* Disconnect from all */
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++)

@@ -118,7 +118,7 @@ int pyrinas_cloud_subscribe(char *topic, pyrinas_cloud_application_cb_t callback
             /* Set the full name */
             snprintf(callbacks[i].full_topic, sizeof(application_sub_topic), CONFIG_PYRINAS_CLOUD_MQTT_APPLICATION_SUB_TOPIC, m_config.client_id.len, m_config.client_id.str, topic_len, topic);
 
-            LOG_DBG("application subscribe to: %s", callbacks[i].full_topic);
+            LOG_INF("Application subscribe to: %s", (char*)callbacks[i].full_topic);
 
             /* Set the values */
             callbacks[i].cb = callback;
@@ -211,7 +211,7 @@ static int subscribe(char *topic, size_t len, uint16_t message_id)
     const struct mqtt_subscription_list subscription_list = {
         .list = &subscribe_topic, .list_count = 1, .message_id = message_id};
 
-    LOG_DBG("Subscribing to topic: %s", (char *)topic);
+    LOG_INF("Subscribing to topic: %s", (char *)topic);
 
     return mqtt_subscribe(&client, &subscription_list);
 }
