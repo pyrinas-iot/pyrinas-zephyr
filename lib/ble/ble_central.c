@@ -86,15 +86,6 @@ static void bt_send_work_handler(struct k_work *work)
             continue;
         }
 
-        struct bt_conn_info info = {0};
-        bt_conn_get_info(m_conns[i].conn, &info);
-        if (info.state != BT_CONN_STATE_CONNECTED)
-        {
-            LOG_WRN("Not connected!");
-            bt_conn_disconnect(m_conns[i].conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-            break;
-        }
-
         // Get the latest item
         err = k_msgq_get(&m_conns[i].q, &m_conns[i].current_payload, K_NO_WAIT);
         if (err)
@@ -103,7 +94,7 @@ static void bt_send_work_handler(struct k_work *work)
             continue;
         }
 
-        LOG_DBG("Sending from %i", i);
+        LOG_DBG("Sending to %i", i);
 
         // Send the data
         // ! This call is asyncronous. Need to call semaphore and then release once data is sent.
@@ -115,20 +106,18 @@ static void bt_send_work_handler(struct k_work *work)
 
             LOG_ERR("Unable to write without rsp. Code: %i", err);
 
+            if (err == -ENOTCONN)
+            {
+                bt_conn_disconnect(m_conns[i].conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+            }
+
             /* Schedule work */
             schedule_work = true;
-
-            /*Break from for loop. Device is busy..*/
-            break;
         }
-        else
+        else if (k_msgq_num_used_get(&m_conns[i].q) > 0)
         {
             /* Still more data? Schedule work.*/
-            if (k_msgq_num_used_get(&m_conns[i].q) > 0)
-            {
-                /* Schedule work */
-                schedule_work = true;
-            }
+            schedule_work = true;
         }
     }
 
@@ -185,7 +174,7 @@ void ble_central_write(const uint8_t *data, uint16_t len)
             if (err)
             {
                 LOG_ERR("Unable to add outgoing event to queue!");
-
+                bt_conn_disconnect(m_conns[i].conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
             }
         }
     }
@@ -218,7 +207,6 @@ static uint8_t discover_func(struct bt_conn *conn,
     if (!attr)
     {
         LOG_INF("Attributes not found!");
-        (void)memset(params, 0, sizeof(*params));
         bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         return BT_GATT_ITER_STOP;
     }
@@ -297,7 +285,7 @@ static uint8_t discover_func(struct bt_conn *conn,
             /* Start scanning if we're < max connections */
             if (atomic_get(&m_num_connected) < m_config.device_count)
             {
-                k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
+                ble_central_scan_start();
             }
         }
 
@@ -331,6 +319,14 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
     char addr_str[BT_ADDR_LE_STR_LEN];
     int err;
 
+    /* We're only interested in connectable events */
+    if (type != BT_GAP_ADV_TYPE_ADV_IND &&
+        type != BT_GAP_ADV_TYPE_ADV_DIRECT_IND &&
+        type != BT_GAP_ADV_TYPE_EXT_ADV)
+    {
+        return;
+    }
+
     bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
     LOG_DBG("Device found: %s (RSSI %d)", (char *)addr_str, rssi);
 
@@ -359,9 +355,7 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
                                 BT_GAP_SCAN_FAST_INTERVAL,
                                 BT_GAP_SCAN_FAST_INTERVAL);
 
-    struct bt_le_conn_param *conn_param = BT_LE_CONN_PARAM(0xc, 0x14, 0, 400);
-
-    err = bt_conn_le_create(addr, create_params, conn_param, &conn);
+    err = bt_conn_le_create(addr, create_params, BT_LE_CONN_PARAM_DEFAULT, &conn);
     if (err)
     {
         LOG_ERR("Create conn to %s failed (%u)", addr_str, err);
@@ -369,7 +363,7 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
         /* Start scanning if we're < max connections */
         if (atomic_get(&m_num_connected) < m_config.device_count)
         {
-            k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
+            ble_central_scan_start();
         }
     }
 }
@@ -391,11 +385,8 @@ void ble_central_scan_start()
         return;
     }
 
-    /* Stop first to confirm .. */
-    ble_central_scan_stop();
-
     /* Duplicates are ok */
-    struct bt_le_scan_param *param = BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_ACTIVE,
+    struct bt_le_scan_param *param = BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE,
                                                       BT_LE_SCAN_OPT_CODED,
                                                       BT_GAP_SCAN_FAST_INTERVAL,
                                                       BT_GAP_SCAN_FAST_WINDOW);
@@ -408,7 +399,7 @@ void ble_central_scan_start()
     }
     else if (err == 0)
     {
-        LOG_INF("Scan start!");
+        LOG_INF("Scan start! Conns: %i", (int)atomic_get(&m_num_connected));
     }
 }
 
@@ -450,7 +441,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     /* Start scanning if we're < max connections */
     if (atomic_get(&m_num_connected) < m_config.device_count)
     {
-        k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
+        ble_central_scan_start();
     }
 }
 
@@ -469,7 +460,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
         /* Start scanning if we're < max connections */
         if (atomic_get(&m_num_connected) < m_config.device_count)
         {
-            k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
+            ble_central_scan_start();
         }
 
         return;
@@ -615,9 +606,9 @@ void ble_central_set_whitelist(ble_central_config_t *config)
 
     LOG_INF("Device count: %d", m_config.device_count);
 
-    k_work_reschedule_for_queue(ble_work_q, &bt_scan_work, K_MSEC(50));
-
     atomic_set(&m_force_disconnect, 0);
+
+    ble_central_scan_start();
 }
 
 #endif
