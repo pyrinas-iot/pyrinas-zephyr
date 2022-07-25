@@ -64,6 +64,9 @@ static struct k_work_delayable bt_scan_work;
 /* Storing static config*/
 static ble_central_config_t m_config;
 
+/* Handling of incoming connection */
+static struct bt_conn *conn_connecting;
+
 static int ble_central_num_cons()
 {
     int count = 0;
@@ -330,9 +333,14 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
                          struct net_buf_simple *ad)
 {
     /* Default connection */
-    struct bt_conn *conn = NULL;
     char addr_str[BT_ADDR_LE_STR_LEN];
     int err;
+
+    /* If already connecting abort */
+    if (conn_connecting)
+    {
+        return;
+    }
 
     /* We're only interested in connectable events */
     if (type != BT_GAP_ADV_TYPE_ADV_IND &&
@@ -370,7 +378,7 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
                                 BT_GAP_SCAN_FAST_INTERVAL,
                                 BT_GAP_SCAN_FAST_INTERVAL);
 
-    err = bt_conn_le_create(addr, create_params, BT_LE_CONN_PARAM_DEFAULT, &conn);
+    err = bt_conn_le_create(addr, create_params, BT_LE_CONN_PARAM_DEFAULT, &conn_connecting);
     if (err)
     {
         LOG_ERR("Create conn to %s failed (%u)", addr_str, err);
@@ -463,8 +471,9 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
     {
         LOG_ERR("Failed to connect: %d", conn_err);
 
-        // Undo our connection
-        bt_conn_unref(conn);
+        /* Undo our connection */
+        bt_conn_unref(conn_connecting);
+        conn_connecting = NULL;
 
         /* Start scanning if we're < max connections */
         if (ble_central_num_cons() < m_config.device_count)
@@ -474,6 +483,9 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
         return;
     }
+
+    /* Tracking elsewhere now.. */
+    conn_connecting = NULL;
 
     LOG_INF("Connected");
 
