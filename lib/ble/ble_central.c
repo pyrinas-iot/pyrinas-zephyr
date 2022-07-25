@@ -408,13 +408,14 @@ void ble_central_scan_start()
         return;
     }
 
-    /* Duplicates are ok */
-    struct bt_le_scan_param *param = BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE,
-                                                      BT_LE_SCAN_OPT_CODED,
-                                                      BT_GAP_SCAN_FAST_INTERVAL,
-                                                      BT_GAP_SCAN_FAST_WINDOW);
+    struct bt_le_scan_param scan_param = {
+        .type = BT_LE_SCAN_TYPE_PASSIVE,
+        .options = BT_LE_SCAN_OPT_CODED | BT_LE_SCAN_OPT_NO_1M,
+        .interval = BT_GAP_SCAN_FAST_INTERVAL,
+        .window = BT_GAP_SCAN_FAST_WINDOW,
+    };
 
-    int err = bt_le_scan_start(param, device_found);
+    int err = bt_le_scan_start(&scan_param, device_found);
     if (err && err != -EALREADY)
     {
         LOG_WRN("Scanning failed to start, err %d", err);
