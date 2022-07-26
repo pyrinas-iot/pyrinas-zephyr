@@ -28,8 +28,10 @@ LOG_MODULE_REGISTER(pyrinas_cloud);
 /* Security tag for fetching certs */
 static sec_tag_t sec_tag_list[] = {CONFIG_PYRINAS_CLOUD_SEC_TAG};
 
+#if defined(CONFIG_NET_NATIVE)
 /* Cloud credentials */
 static uint8_t cloud_credentials[3][1024];
+#endif
 
 /* Buffers for MQTT client. */
 static uint8_t rx_buffer[CONFIG_PYRINAS_CLOUD_MQTT_MESSAGE_BUFFER_SIZE] = {0};
