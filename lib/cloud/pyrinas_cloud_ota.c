@@ -2,7 +2,7 @@
 
 #include <storage/flash_map.h>
 #include <dfu/mcuboot.h>
-#include <zephyr/dfu/flash_img.h>
+#include <dfu/flash_img.h>
 #include <pyrinas_cloud/pyrinas_version.h>
 #include <pyrinas_cloud/pyrinas_cloud_ota.h>
 #include <pyrinas_cloud/pyrinas_cloud_codec.h>
